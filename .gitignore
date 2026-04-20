@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Database (generated at runtime)
+dev.db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Environment files (keep .env.example)
+.env
+.env.local
+.env.*.local
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude agent
+.claude/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test output
+coverage/
