@@ -6,6 +6,7 @@ export interface ScrapedInstructor {
   photoUrl:        string
   instagramHandle: string | null
   email:           string | null
+  phone:           string | null
   linkedinUrl:     string | null
   classTypes:      string[]
   studioName:      string
@@ -32,6 +33,7 @@ const INSTRUCTOR_EVAL = `(function() {
     var photo = '';
     var instagram = null;
     var email = null;
+    var phone = null;
     var linkedin = null;
     var classTypes = [];
 
@@ -76,6 +78,13 @@ const INSTRUCTOR_EVAL = `(function() {
     var emailMatch = allText.match(/[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}/);
     if (emailMatch) email = emailMatch[0];
 
+    // Phone number from text (US formats)
+    var phoneMatch = allText.match(/(?:\+?1[\s\-.]?)?\(?([2-9]\d{2})\)?[\s\-.]?(\d{3})[\s\-.]?(\d{4})/);
+    if (phoneMatch) phone = phoneMatch[0].trim();
+    // Also check tel: links
+    var telLink = Array.from(card.querySelectorAll('a[href^="tel:"]'))[0];
+    if (telLink) phone = telLink.href.replace('tel:', '').trim();
+
     // Class type pills / tags
     var tagEls = Array.from(card.querySelectorAll(
       '[class*="tag"],[class*="Tag"],[class*="pill"],[class*="Pill"],[class*="chip"],[class*="Chip"],' +
@@ -86,7 +95,7 @@ const INSTRUCTOR_EVAL = `(function() {
       if (t && t.length > 0 && t.length < 50) classTypes.push(t);
     });
 
-    return { name: name, bio: bio, photo: photo, instagram: instagram, email: email, linkedin: linkedin, classTypes: classTypes };
+    return { name: name, bio: bio, photo: photo, instagram: instagram, email: email, phone: phone, linkedin: linkedin, classTypes: classTypes };
   }
 
   // Strategy 1: find the Staff / Instructors section heading, then scan sibling/child cards
@@ -145,6 +154,7 @@ const INSTRUCTOR_EVAL = `(function() {
       photoUrl:        d.photo,
       instagramHandle: d.instagram,
       email:           d.email,
+      phone:           d.phone,
       linkedinUrl:     d.linkedin,
       classTypes:      d.classTypes,
     });
@@ -271,13 +281,21 @@ async function expandAllInstructors(page: import('playwright').Page): Promise<vo
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
+/**
+ * Scrape MindBody Explore for instructors near `zipcode`.
+ * Instead of returning a flat list at the end, `onBatch` is called with each
+ * studio's instructors as soon as they are extracted so the caller can persist
+ * them immediately and the UI reflects progress in real time.
+ * Returns the total number of instructors passed to onBatch across all studios.
+ */
 export async function scrapeInstructorsFromMindBody(
   zipcode:         string,
   classTypeFilter: string | undefined,
-  onProgress:      (msg: string) => void
-): Promise<ScrapedInstructor[]> {
+  onProgress:      (msg: string) => void,
+  onBatch:         (instructors: ScrapedInstructor[]) => Promise<void>
+): Promise<number> {
   const browser = await chromium.launch({ headless: true })
-  const results: ScrapedInstructor[] = []
+  let totalFound = 0
 
   try {
     const context = await browser.newContext({
@@ -347,7 +365,7 @@ export async function scrapeInstructorsFromMindBody(
     if (studioUrls.length === 0) {
       onProgress('No /explore/locations/ studio URLs found — aborting.')
       await context.close()
-      return results
+      return totalFound
     }
 
     studioUrls = studioUrls.slice(0, 50)
@@ -379,14 +397,15 @@ export async function scrapeInstructorsFromMindBody(
         type RawInstructor = {
           fullName: string; bio: string; photoUrl: string
           instagramHandle: string | null; email: string | null
-          linkedinUrl: string | null; classTypes: string[]
+          phone: string | null; linkedinUrl: string | null; classTypes: string[]
         }
         const rawList = (await page.evaluate(INSTRUCTOR_EVAL)) as RawInstructor[]
 
         onProgress(`  ↳ found ${rawList.length} instructors at ${studioName}`)
 
+        // Build this studio's batch, applying class-type filter
+        const batch: ScrapedInstructor[] = []
         for (const raw of rawList) {
-          // Apply class-type filter if requested
           if (
             classTypeFilter &&
             raw.classTypes.length > 0 &&
@@ -397,12 +416,13 @@ export async function scrapeInstructorsFromMindBody(
             continue
           }
 
-          results.push({
+          batch.push({
             fullName:        raw.fullName,
             bio:             raw.bio,
             photoUrl:        raw.photoUrl,
             instagramHandle: raw.instagramHandle,
             email:           raw.email,
+            phone:           raw.phone ?? null,
             linkedinUrl:     raw.linkedinUrl,
             classTypes:      raw.classTypes,
             studioName,
@@ -410,28 +430,16 @@ export async function scrapeInstructorsFromMindBody(
             workZipcode:     zipcode,
           })
         }
+
+        if (batch.length > 0) {
+          await onBatch(batch)
+          totalFound += batch.length
+          onProgress(`  ↳ saved ${batch.length} instructors from ${studioName} (total: ${totalFound})`)
+        }
       } catch (err: any) {
         onProgress(`  ↳ error at ${studioUrl}: ${err?.message ?? String(err)}`)
         // Continue to next studio
       }
-    }
-
-    // ── Step 3: enrich via public Instagram profile meta descriptions ─────────
-    for (const instructor of results) {
-      if (!instructor.instagramHandle || instructor.bio) continue
-      try {
-        onProgress(`Enriching IG @${instructor.instagramHandle}…`)
-        await page.goto(
-          `https://www.instagram.com/${instructor.instagramHandle}/`,
-          { waitUntil: 'domcontentloaded', timeout: 10_000 }
-        )
-        await sleep(1000)
-        const igBio = await page.evaluate(() => {
-          const m = document.querySelector('meta[name="description"]')
-          return m ? (m as HTMLMetaElement).content : ''
-        }) as string
-        if (igBio) instructor.bio = igBio
-      } catch { /* ignore IG errors */ }
     }
 
     await context.close()
@@ -439,6 +447,6 @@ export async function scrapeInstructorsFromMindBody(
     await browser.close()
   }
 
-  onProgress(`Scrape complete — ${results.length} instructors total.`)
-  return results
+  onProgress(`Scrape complete — ${totalFound} instructors total.`)
+  return totalFound
 }

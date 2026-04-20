@@ -198,68 +198,73 @@ async function runInstructorDiscovery(
     data: { status: 'RUNNING' },
   })
 
+  let instructorsFound = 0
+
   try {
-    const scraped = await scrapeInstructorsFromMindBody(
+    const totalFound = await scrapeInstructorsFromMindBody(
       zipcode,
       classType,
-      (msg) => console.log(`[instructor-run-${runId}]`, msg)
-    )
+      (msg) => console.log(`[instructor-run-${runId}]`, msg),
+      async (batch) => {
+        for (const s of batch) {
+          if (instructorsFound >= 200) break   // cap at 200 per run
 
-    let instructorsFound = 0
+          // Find matching Studio by normalized brand name
+          let studioId: number | null = null
+          if (s.studioName) {
+            const normalized = normalizeBrandName(s.studioName)
+            const studio = await prisma.studio.findFirst({
+              where: { normalizedBrand: normalized },
+            })
+            studioId = studio?.id ?? null
+          }
 
-    for (const s of scraped) {
-      // Find or create matching Studio by normalized brand name
-      let studioId: number | null = null
-      if (s.studioName) {
-        const normalized = normalizeBrandName(s.studioName)
-        const studio = await prisma.studio.findFirst({
-          where: { normalizedBrand: normalized },
-        })
-        studioId = studio?.id ?? null
+          const normalizedName = normalizeBrandName(s.fullName)
+          const dedupKey = s.instagramHandle
+            ? `ig:${s.instagramHandle}`
+            : `name:${normalizedName}|${studioId ?? 'unknown'}`
+
+          await (prisma as any).instructor.upsert({
+            where: { dedupKey },
+            create: {
+              dedupKey,
+              fullName:        s.fullName,
+              normalizedName,
+              ...(studioId !== null ? { studio: { connect: { id: studioId } } } : {}),
+              studioNameRaw:   s.studioName || null,
+              workZipcode:     s.workZipcode,
+              email:           s.email,
+              phone:           s.phone || null,
+              instagramHandle: s.instagramHandle,
+              linkedinUrl:     s.linkedinUrl,
+              bio:             s.bio || null,
+              photoUrl:        s.photoUrl || null,
+              classTypes:      JSON.stringify(s.classTypes),
+              sourceUrl:       s.studioUrl,
+            },
+            update: {
+              fullName:        s.fullName,
+              ...(studioId !== null
+                ? { studio: { connect: { id: studioId } } }
+                : { studio: { disconnect: true } }),
+              studioNameRaw:   s.studioName || null,
+              workZipcode:     s.workZipcode,
+              email:           s.email,
+              phone:           s.phone || null,
+              instagramHandle: s.instagramHandle,
+              linkedinUrl:     s.linkedinUrl,
+              bio:             s.bio || null,
+              photoUrl:        s.photoUrl || null,
+              classTypes:      JSON.stringify(s.classTypes),
+              sourceUrl:       s.studioUrl,
+              updatedAt:       new Date(),
+            },
+          })
+
+          instructorsFound++
+        }
       }
-
-      const normalizedName = normalizeBrandName(s.fullName)
-      const dedupKey = s.instagramHandle
-        ? `ig:${s.instagramHandle}`
-        : `name:${normalizedName}|${studioId ?? 'unknown'}`
-
-      await (prisma as any).instructor.upsert({
-        where: { dedupKey },
-        create: {
-          dedupKey,
-          fullName:     s.fullName,
-          normalizedName,
-          studioId,
-          studioNameRaw: s.studioName || null,
-          workZipcode:  s.workZipcode,
-          email:        s.email,
-          phone:        null,
-          instagramHandle: s.instagramHandle,
-          linkedinUrl:  s.linkedinUrl,
-          bio:          s.bio || null,
-          photoUrl:     s.photoUrl || null,
-          classTypes:   JSON.stringify(s.classTypes),
-          sourceUrl:    s.studioUrl,
-        },
-        update: {
-          fullName:     s.fullName,
-          studioId,
-          studioNameRaw: s.studioName || null,
-          workZipcode:  s.workZipcode,
-          email:        s.email,
-          instagramHandle: s.instagramHandle,
-          linkedinUrl:  s.linkedinUrl,
-          bio:          s.bio || null,
-          photoUrl:     s.photoUrl || null,
-          classTypes:   JSON.stringify(s.classTypes),
-          sourceUrl:    s.studioUrl,
-          updatedAt:    new Date(),
-        },
-      })
-
-      instructorsFound++
-      if (instructorsFound >= 200) break   // cap at 200 per run
-    }
+    )
 
     await prisma.discoveryRun.update({
       where: { id: runId },
