@@ -139,25 +139,26 @@ model PricingPlan {
 }
 
 model Instructor {
-  id              Int      @id @default(autoincrement())
-  dedupKey        String   @unique  // instagramHandle if known, else "normalized-name|studioId"
-  fullName        String
-  normalizedName  String
-  studioId        Int?
-  studio          Studio?  @relation(fields: [studioId], references: [id], onDelete: SetNull)
-  workZipcode     String?
-  email           String?
-  phone           String?
-  instagramHandle String?
-  linkedinUrl     String?
-  bio             String?
-  address         String?
-  photoUrl        String?
-  classTypes      String?  // JSON array as string, e.g. '["Pilates","Yoga"]'
-  studioNameRaw   String?  // scraped studio name — populated even when studioId is null
-  sourceUrl       String?  // MindBody profile URL
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id               Int       @id @default(autoincrement())
+  dedupKey         String    @unique  // "slug:{profileSlug}" | "ig:{handle}" | "name:{norm}|{studioId}"
+  fullName         String
+  normalizedName   String
+  studioId         Int?
+  studio           Studio?   @relation(fields: [studioId], references: [id], onDelete: SetNull)
+  workZipcode      String?
+  email            String?
+  phone            String?
+  instagramHandle  String?
+  linkedinUrl      String?
+  bio              String?
+  address          String?
+  photoUrl         String?
+  classTypes       String?   // JSON array as string, e.g. '["Pilates","Yoga"]'
+  studioNameRaw    String?   // scraped studio name — populated even when studioId is null
+  sourceUrl        String?   // MindBody profile URL  (set during discovery)
+  detailsFetchedAt DateTime? // set when Phase 2 "Get Details" has been run for this row
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 
 /// Audit log for every user-triggered discovery job.

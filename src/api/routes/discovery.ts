@@ -3,7 +3,7 @@ import { z } from 'zod'
 import prisma from '../lib/prisma'
 import { runDiscovery, runFranchiseDiscovery, cancelRun } from '../workers/discoveryRunner'
 import { verifyApiKey } from '../workers/geocode'
-import { scrapeInstructorsFromMindBody } from '../workers/instructorScraper'
+import { discoverInstructorUrls } from '../workers/instructorScraper'
 import { normalizeBrandName } from '../workers/scraper'
 import type { DiscoverRequest, DiscoverResponse, DiscoveryRunSummary, FranchiseDiscoverRequest, InstructorDiscoverRequest } from '../../shared/types'
 
@@ -191,7 +191,7 @@ const discoveryRoutes: FastifyPluginAsync = async (app) => {
 async function runInstructorDiscovery(
   runId: number,
   zipcode: string,
-  classType: string | undefined
+  _classType: string | undefined   // kept for API compat; filtering happens in Phase 2
 ): Promise<void> {
   await prisma.discoveryRun.update({
     where: { id: runId },
@@ -201,15 +201,14 @@ async function runInstructorDiscovery(
   let instructorsFound = 0
 
   try {
-    const totalFound = await scrapeInstructorsFromMindBody(
+    await discoverInstructorUrls(
       zipcode,
-      classType,
       (msg) => console.log(`[instructor-run-${runId}]`, msg),
       async (batch) => {
         for (const s of batch) {
-          if (instructorsFound >= 200) break   // cap at 200 per run
+          if (instructorsFound >= 500) break   // cap per run
 
-          // Find matching Studio by normalized brand name
+          // Look up matching studio by name
           let studioId: number | null = null
           if (s.studioName) {
             const normalized = normalizeBrandName(s.studioName)
@@ -220,44 +219,34 @@ async function runInstructorDiscovery(
           }
 
           const normalizedName = normalizeBrandName(s.fullName)
-          const dedupKey = s.instagramHandle
-            ? `ig:${s.instagramHandle}`
+          const dedupKey = s.profileSlug
+            ? `slug:${s.profileSlug}`
             : `name:${normalizedName}|${studioId ?? 'unknown'}`
 
+          // Phase 1 upsert: create minimal record; on conflict only update
+          // studio/zipcode/sourceUrl — do NOT overwrite bio/photo/etc that
+          // Phase 2 may have already filled in.
           await (prisma as any).instructor.upsert({
             where: { dedupKey },
             create: {
               dedupKey,
-              fullName:        s.fullName,
+              fullName:      s.fullName,
               normalizedName,
               ...(studioId !== null ? { studio: { connect: { id: studioId } } } : {}),
-              studioNameRaw:   s.studioName || null,
-              workZipcode:     s.workZipcode,
-              email:           s.email,
-              phone:           s.phone || null,
-              instagramHandle: s.instagramHandle,
-              linkedinUrl:     s.linkedinUrl,
-              bio:             s.bio || null,
-              photoUrl:        s.photoUrl || null,
-              classTypes:      JSON.stringify(s.classTypes),
-              sourceUrl:       s.studioUrl,
+              studioNameRaw: s.studioName || null,
+              workZipcode:   s.workZipcode,
+              sourceUrl:     s.studioUrl,     // studioUrl carries the profile URL in Phase 1
+              classTypes:    JSON.stringify([]),
             },
             update: {
-              fullName:        s.fullName,
+              // Only update location/studio fields; never clobber detail fields
+              studioNameRaw: s.studioName || null,
+              workZipcode:   s.workZipcode,
+              sourceUrl:     s.studioUrl,
               ...(studioId !== null
                 ? { studio: { connect: { id: studioId } } }
-                : { studio: { disconnect: true } }),
-              studioNameRaw:   s.studioName || null,
-              workZipcode:     s.workZipcode,
-              email:           s.email,
-              phone:           s.phone || null,
-              instagramHandle: s.instagramHandle,
-              linkedinUrl:     s.linkedinUrl,
-              bio:             s.bio || null,
-              photoUrl:        s.photoUrl || null,
-              classTypes:      JSON.stringify(s.classTypes),
-              sourceUrl:       s.studioUrl,
-              updatedAt:       new Date(),
+                : {}),
+              updatedAt:     new Date(),
             },
           })
 
@@ -269,18 +258,18 @@ async function runInstructorDiscovery(
     await prisma.discoveryRun.update({
       where: { id: runId },
       data: {
-        status: 'COMPLETED',
+        status:      'COMPLETED',
         studiosFound: instructorsFound,
-        completedAt: new Date(),
+        completedAt:  new Date(),
       },
     })
   } catch (err: any) {
     await prisma.discoveryRun.update({
       where: { id: runId },
       data: {
-        status: 'FAILED',
+        status:       'FAILED',
         errorMessage: err?.message ?? String(err),
-        completedAt: new Date(),
+        completedAt:  new Date(),
       },
     })
     throw err

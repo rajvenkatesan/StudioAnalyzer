@@ -194,21 +194,26 @@ export interface InstructorDiscoverRequest {
 }
 
 export interface InstructorRow {
-  id:              number
-  dedupKey:        string
-  fullName:        string
-  studioId:        number | null
-  studioName:      string | null
-  workZipcode:     string | null
-  email:           string | null
-  phone:           string | null
-  instagramHandle: string | null
-  linkedinUrl:     string | null
-  bio:             string | null
-  address:         string | null
-  photoUrl:        string | null
-  classTypes:      string[]
-  sourceUrl:       string | null
+  id:               number
+  dedupKey:         string
+  fullName:         string
+  studioId:         number | null
+  studioName:       string | null
+  workZipcode:      string | null
+  email:            string | null
+  phone:            string | null
+  instagramHandle:  string | null
+  linkedinUrl:      string | null
+  bio:              string | null
+  address:          string | null
+  photoUrl:         string | null
+  classTypes:       string[]
+  sourceUrl:        string | null
+  detailsFetchedAt: string | null  // ISO timestamp — null = only URL collected, details not yet fetched
+}
+
+export interface InstructorEnrichRequest {
+  ids: number[]
 }
 
 export interface StudioComparison {

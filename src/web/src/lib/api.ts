@@ -14,6 +14,7 @@ import type {
   PricingRecommendationResponse,
   InstructorRow,
   InstructorDiscoverRequest,
+  InstructorEnrichRequest,
 } from '@shared/types'
 
 const BASE = '/api/v1'
@@ -135,7 +136,9 @@ export const api = {
       if (params?.classType) qs.set('classType',  params.classType)
       return get<InstructorRow[]>(`/instructors${qs.size ? `?${qs}` : ''}`)
     },
-    get: (id: number) => get<InstructorRow>(`/instructors/${id}`),
+    get:    (id: number) => get<InstructorRow>(`/instructors/${id}`),
+    enrich: (body: InstructorEnrichRequest) =>
+      post<{ ok: boolean; queued: number }>('/instructors/enrich', body),
   },
 
   // ── Hints (StudioHelper.md) ───────────────────────────────────────────────
