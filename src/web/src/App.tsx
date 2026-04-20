@@ -4,14 +4,16 @@ import StudiosTab from './components/StudiosTab'
 import HintsTab from './components/HintsTab'
 import PricingTab from './components/PricingTab'
 import StudioPricingTab from './components/StudioPricingTab'
+import InstructorsTab from './components/InstructorsTab'
 
-type Tab = 'discover' | 'studios' | 'pricing' | 'your-pricing' | 'hints'
+type Tab = 'discover' | 'studios' | 'pricing' | 'your-pricing' | 'instructors' | 'hints'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'discover',     label: 'Discover'      },
   { key: 'studios',      label: 'Studios'       },
   { key: 'pricing',      label: 'Pricing'       },
   { key: 'your-pricing', label: 'Studio Pricing' },
+  { key: 'instructors',  label: 'Instructors'   },
   { key: 'hints',        label: 'Hints'         },
 ]
 
@@ -51,6 +53,7 @@ export default function App() {
         {tab === 'studios'      && <StudiosTab      />}
         {tab === 'pricing'      && <PricingTab      />}
         {tab === 'your-pricing' && <StudioPricingTab />}
+        {tab === 'instructors'  && <InstructorsTab  />}
         {tab === 'hints'        && <HintsTab        />}
       </main>
     </div>

@@ -39,7 +39,7 @@ export interface DiscoveryRunSummary {
   id: number
   searchQuery: string
   zipcode: string          // "NATIONWIDE" for franchise runs
-  discoveryMode: 'zipcode' | 'franchise' | 'refresh'
+  discoveryMode: 'zipcode' | 'franchise' | 'refresh' | 'instructors'
   status: RunStatus
   studiosFound: number | null
   locationsFound: number | null
@@ -186,6 +186,29 @@ export interface UtilizationCell {
   avgUtilizationRate: number | null
   classCount: number
   dataAvailable: boolean
+}
+
+export interface InstructorDiscoverRequest {
+  zipcode: string
+  classType?: string   // optional filter e.g. "Pilates"
+}
+
+export interface InstructorRow {
+  id:              number
+  dedupKey:        string
+  fullName:        string
+  studioId:        number | null
+  studioName:      string | null
+  workZipcode:     string | null
+  email:           string | null
+  phone:           string | null
+  instagramHandle: string | null
+  linkedinUrl:     string | null
+  bio:             string | null
+  address:         string | null
+  photoUrl:        string | null
+  classTypes:      string[]
+  sourceUrl:       string | null
 }
 
 export interface StudioComparison {

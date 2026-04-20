@@ -36,6 +36,7 @@ model Studio {
   phone           String?
   locations       Location[]
   pricingPlans    PricingPlan[]
+  instructors     Instructor[]
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
@@ -135,6 +136,27 @@ model PricingPlan {
   scrapedAt     DateTime  @default(now())
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+}
+
+model Instructor {
+  id              Int      @id @default(autoincrement())
+  dedupKey        String   @unique  // instagramHandle if known, else "normalized-name|studioId"
+  fullName        String
+  normalizedName  String
+  studioId        Int?
+  studio          Studio?  @relation(fields: [studioId], references: [id], onDelete: SetNull)
+  workZipcode     String?
+  email           String?
+  phone           String?
+  instagramHandle String?
+  linkedinUrl     String?
+  bio             String?
+  address         String?
+  photoUrl        String?
+  classTypes      String?  // JSON array as string, e.g. '["Pilates","Yoga"]'
+  sourceUrl       String?  // MindBody profile URL
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 /// Audit log for every user-triggered discovery job.

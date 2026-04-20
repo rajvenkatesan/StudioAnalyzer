@@ -6,6 +6,7 @@ import locationRoutes from './routes/locations'
 import pricingRoutes from './routes/pricing'
 import analysisRoutes from './routes/analysis'
 import hintsRoutes from './routes/hints'
+import instructorRoutes from './routes/instructors'
 
 export function buildServer() {
   const app = Fastify({ logger: { level: 'info' } })
@@ -31,7 +32,8 @@ export function buildServer() {
   app.register(locationRoutes, { prefix: '/api/v1' })
   app.register(pricingRoutes, { prefix: '/api/v1' })
   app.register(analysisRoutes, { prefix: '/api/v1' })
-  app.register(hintsRoutes,   { prefix: '/api/v1' })
+  app.register(hintsRoutes,       { prefix: '/api/v1' })
+  app.register(instructorRoutes, { prefix: '/api/v1' })
 
   return app
 }
