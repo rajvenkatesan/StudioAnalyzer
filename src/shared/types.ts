@@ -135,16 +135,26 @@ export interface PricingPlanRow {
 
 // ─── Pricing recommendation types ─────────────────────────────────────────
 
+export interface ComparableStudio {
+  studioName: string
+  city:       string | null
+  state:      string | null
+  colIndex:   number
+  price:      number          // actual (non-normalised) price
+}
+
 export interface PricingRecommendationRow {
   key:         string
   label:       string
   planType:    PlanType
-  classCount:  number | null  // null = unlimited / any
-  dataPoints:  number         // # studios contributing to this tier
-  recommended: number | null  // COL-adjusted median, rounded to $5
-  low:         number | null  // COL-adjusted P25
-  high:        number | null  // COL-adjusted P75
-  rawMedian:   number | null  // unscaled national-average median (for reference)
+  classCount:  number | null      // null = unlimited / any
+  dataPoints:  number             // # plans contributing to this tier
+  recommended: number | null      // COL-adjusted median, rounded to $5
+  low:         number | null      // COL-adjusted P25
+  high:        number | null      // COL-adjusted P75
+  rawMedian:   number | null      // unscaled national-average median (for reference)
+  colBand:     number | null      // ± band used: 5 | 10 | 15 | 25 | null (no data)
+  comparables: ComparableStudio[] // studios used, sorted by price asc
 }
 
 export interface PricingRecommendationResponse {
@@ -153,7 +163,7 @@ export interface PricingRecommendationResponse {
   state:           string | null
   colIndex:        number       // COL index for the target location
   colDescription:  string       // e.g. "15% above the US average"
-  totalStudios:    number       // # studios used across all tiers
+  totalStudios:    number       // # unique studios used across all tiers
   recommendations: PricingRecommendationRow[]
 }
 

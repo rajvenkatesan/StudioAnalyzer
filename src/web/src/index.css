@@ -69,3 +69,47 @@
   /* N/A text */
   .na { @apply text-gray-300; }
 }
+
+/* ── Print / PDF ──────────────────────────────────────────────────────────────
+   Override every ancestor that clips content so the full page prints.
+   The app shell uses `h-screen overflow-hidden` on the root div and
+   `overflow-y-auto` on <main> — both must become visible for print.
+   ─────────────────────────────────────────────────────────────────────────── */
+@media print {
+  /* Reset height/overflow all the way up the tree */
+  html, body {
+    height: auto !important;
+    overflow: visible !important;
+  }
+  #root {
+    height: auto !important;
+    overflow: visible !important;
+  }
+  /* App shell root: <div class="flex h-screen overflow-hidden"> */
+  #root > div {
+    height: auto !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+  /* Left nav sidebar — not needed in PDF */
+  nav {
+    display: none !important;
+  }
+  /* Main content pane */
+  main {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    display: block !important;
+    width: 100% !important;
+  }
+  /* Hide any element marked as print-only-hidden */
+  [data-print-hide] {
+    display: none !important;
+  }
+  /* Sensible page breaks for tables */
+  table  { page-break-inside: auto; width: 100%; }
+  tr     { page-break-inside: avoid; page-break-after: auto; }
+  thead  { display: table-header-group; }
+  @page  { margin: 1.5cm; }
+}
