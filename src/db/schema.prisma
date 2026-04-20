@@ -1,0 +1,155 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Note: SQLite does not support Prisma enums.
+// ─── All enum-like fields use String with valid values documented below.
+//
+//  dayOfWeek   : "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN"
+//  planType    : "DROP_IN" | "CLASS_PACK" | "MONTHLY" | "ANNUAL"
+//  status      : "PENDING" | "RUNNING" | "COMPLETED" | "FAILED"
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model StudioType {
+  id        Int      @id @default(autoincrement())
+  name      String
+  slug      String   @unique
+  studios   Studio[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Studio {
+  id              Int           @id @default(autoincrement())
+  studioTypeId    Int
+  studioType      StudioType    @relation(fields: [studioTypeId], references: [id])
+  name            String
+  normalizedBrand String
+  websiteUrl      String?
+  phone           String?
+  locations       Location[]
+  pricingPlans    PricingPlan[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([normalizedBrand, studioTypeId])
+}
+
+model Location {
+  id             Int                @id @default(autoincrement())
+  studioId       Int
+  studio         Studio             @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  addressLine1   String
+  addressLine2   String?
+  city           String
+  state          String
+  postalCode     String
+  country        String             @default("US")
+  latitude       Float?
+  longitude      Float?
+  googlePlaceId  String?            @unique
+  hours          HoursOfOperation[]
+  classSchedules ClassSchedule[]
+  utilization    ClassUtilization[]
+  pricingPlans   PricingPlan[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  // Composite dedup key used in application code when googlePlaceId is absent:
+  // (studio.normalizedBrand, addressLine1, postalCode)
+}
+
+/// Operating hours per location — 20 slots/day (hour 4–23) × 7 days = 140 rows per location.
+/// Replaced in full on each discovery re-run.
+model HoursOfOperation {
+  id         Int      @id @default(autoincrement())
+  locationId Int
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  dayOfWeek  String   // "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN"
+  hour       Int      // 4–23 (4 AM to 11 PM)
+  isOpen     Boolean
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([locationId, dayOfWeek, hour])
+}
+
+/// Recurring weekly class slots. Replaced in full per location on each re-run.
+model ClassSchedule {
+  id              Int                @id @default(autoincrement())
+  locationId      Int
+  location        Location           @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  discoveryRunId  Int
+  discoveryRun    DiscoveryRun       @relation(fields: [discoveryRunId], references: [id])
+  className       String
+  dayOfWeek       String             // "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN"
+  startTime       String             // "HH:MM" 24h
+  durationMinutes Int                @default(60)
+  instructor      String?
+  totalSpots      Int?
+  utilization     ClassUtilization[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+}
+
+/// Utilization snapshot per class slot per run. Appended — never replaced.
+/// spotsAvailable is null and dataAvailable=false when the site does not expose capacity info.
+model ClassUtilization {
+  id              Int           @id @default(autoincrement())
+  classScheduleId Int
+  classSchedule   ClassSchedule @relation(fields: [classScheduleId], references: [id], onDelete: Cascade)
+  locationId      Int
+  location        Location      @relation(fields: [locationId], references: [id])
+  discoveryRunId  Int
+  discoveryRun    DiscoveryRun  @relation(fields: [discoveryRunId], references: [id])
+  dayOfWeek       String        // denormalized for fast aggregation
+  startTime       String        // denormalized for fast aggregation
+  spotsAvailable  Int?          // null when dataAvailable=false
+  totalSpots      Int?
+  dataAvailable   Boolean       @default(true)
+  observedAt      DateTime      @default(now())
+}
+
+/// Current pricing plans per studio. Replaced in full on each re-run (no history in v1).
+model PricingPlan {
+  id            Int       @id @default(autoincrement())
+  studioId      Int
+  studio        Studio    @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  locationId    Int?
+  location      Location? @relation(fields: [locationId], references: [id])
+  planName      String
+  planType      String    // "DROP_IN" | "CLASS_PACK" | "MONTHLY" | "ANNUAL"
+  priceAmount   Float
+  currency      String    @default("USD")
+  classCount    Int?      // for CLASS_PACK
+  validityDays  Int?
+  pricePerClass Float?    // computed at insert; see pricing normalization rules
+  notes         String?
+  scrapedAt     DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+/// Audit log for every user-triggered discovery job.
+model DiscoveryRun {
+  id               Int             @id @default(autoincrement())
+  searchQuery      String
+  zipcode          String
+  status           String          @default("PENDING") // "PENDING" | "RUNNING" | "COMPLETED" | "FAILED"
+  studiosFound     Int?
+  locationsFound   Int?
+  newLocations     Int?
+  updatedLocations Int?
+  errorMessage     String?
+  startedAt        DateTime        @default(now())
+  completedAt      DateTime?
+  schedules        ClassSchedule[]
+  utilization      ClassUtilization[]
+}
