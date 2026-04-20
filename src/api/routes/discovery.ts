@@ -3,7 +3,9 @@ import { z } from 'zod'
 import prisma from '../lib/prisma'
 import { runDiscovery, runFranchiseDiscovery, cancelRun } from '../workers/discoveryRunner'
 import { verifyApiKey } from '../workers/geocode'
-import type { DiscoverRequest, DiscoverResponse, DiscoveryRunSummary, FranchiseDiscoverRequest } from '../../shared/types'
+import { discoverInstructorUrls } from '../workers/instructorScraper'
+import { normalizeBrandName } from '../workers/scraper'
+import type { DiscoverRequest, DiscoverResponse, DiscoveryRunSummary, FranchiseDiscoverRequest, InstructorDiscoverRequest } from '../../shared/types'
 
 const DiscoverBodySchema = z.object({
   zipcode: z.string().regex(/^\d{5}$/, 'Must be a 5-digit US zipcode'),
@@ -12,6 +14,11 @@ const DiscoverBodySchema = z.object({
 
 const FranchiseBodySchema = z.object({
   studioName: z.string().min(1).max(100),
+})
+
+const InstructorBodySchema = z.object({
+  zipcode: z.string().regex(/^\d{5}$/, 'Must be a 5-digit US zipcode'),
+  classType: z.string().max(50).optional(),
 })
 
 const discoveryRoutes: FastifyPluginAsync = async (app) => {
@@ -94,6 +101,33 @@ const discoveryRoutes: FastifyPluginAsync = async (app) => {
     return reply.send({ ok: true })
   })
 
+  // POST /api/v1/discovery/instructors — scrape MindBody for instructors near a zipcode
+  app.post<{ Body: InstructorDiscoverRequest; Reply: DiscoverResponse }>(
+    '/discovery/instructors',
+    async (request, reply) => {
+      const parsed = InstructorBodySchema.safeParse(request.body)
+      if (!parsed.success) {
+        return reply.status(400).send({ error: parsed.error.flatten() } as any)
+      }
+
+      const { zipcode, classType } = parsed.data
+
+      const run = await prisma.discoveryRun.create({
+        data: {
+          searchQuery: classType ?? 'all',
+          zipcode: `INSTRUCTORS:${zipcode}`,
+          status: 'PENDING',
+        },
+      })
+
+      setImmediate(() => runInstructorDiscovery(run.id, zipcode, classType).catch((err) => {
+        app.log.error({ runId: run.id, err }, 'Instructor discovery run failed unexpectedly')
+      }))
+
+      return reply.status(202).send({ runId: run.id, status: 'PENDING' })
+    }
+  )
+
   // GET /api/v1/discovery/runs — list all runs, newest first
   app.get('/discovery/runs', async (request, reply) => {
     const runs = await prisma.discoveryRun.findMany({
@@ -105,7 +139,10 @@ const discoveryRoutes: FastifyPluginAsync = async (app) => {
       id: r.id,
       searchQuery: r.searchQuery,
       zipcode: r.zipcode,
-      discoveryMode: r.zipcode === 'NATIONWIDE' ? 'franchise' : r.zipcode === 'REFRESH' ? 'refresh' : 'zipcode',
+      discoveryMode: r.zipcode === 'NATIONWIDE' ? 'franchise'
+                   : r.zipcode === 'REFRESH'    ? 'refresh'
+                   : r.zipcode.startsWith('INSTRUCTORS:') ? 'instructors'
+                   : 'zipcode',
       status: r.status as DiscoveryRunSummary['status'],
       studiosFound: r.studiosFound,
       locationsFound: r.locationsFound,
@@ -132,7 +169,10 @@ const discoveryRoutes: FastifyPluginAsync = async (app) => {
       id: r.id,
       searchQuery: r.searchQuery,
       zipcode: r.zipcode,
-      discoveryMode: r.zipcode === 'NATIONWIDE' ? 'franchise' : r.zipcode === 'REFRESH' ? 'refresh' : 'zipcode',
+      discoveryMode: r.zipcode === 'NATIONWIDE' ? 'franchise'
+                   : r.zipcode === 'REFRESH'    ? 'refresh'
+                   : r.zipcode.startsWith('INSTRUCTORS:') ? 'instructors'
+                   : 'zipcode',
       status: r.status as DiscoveryRunSummary['status'],
       studiosFound: r.studiosFound,
       locationsFound: r.locationsFound,
@@ -146,6 +186,94 @@ const discoveryRoutes: FastifyPluginAsync = async (app) => {
 
     return reply.send(summary)
   })
+}
+
+async function runInstructorDiscovery(
+  runId: number,
+  zipcode: string,
+  _classType: string | undefined   // kept for API compat; filtering happens in Phase 2
+): Promise<void> {
+  await prisma.discoveryRun.update({
+    where: { id: runId },
+    data: { status: 'RUNNING' },
+  })
+
+  let instructorsFound = 0
+
+  try {
+    await discoverInstructorUrls(
+      zipcode,
+      (msg) => console.log(`[instructor-run-${runId}]`, msg),
+      async (batch) => {
+        for (const s of batch) {
+          if (instructorsFound >= 500) break   // cap per run
+
+          // Look up matching studio by name
+          let studioId: number | null = null
+          if (s.studioName) {
+            const normalized = normalizeBrandName(s.studioName)
+            const studio = await prisma.studio.findFirst({
+              where: { normalizedBrand: normalized },
+            })
+            studioId = studio?.id ?? null
+          }
+
+          const normalizedName = normalizeBrandName(s.fullName)
+          const dedupKey = s.profileSlug
+            ? `slug:${s.profileSlug}`
+            : `name:${normalizedName}|${studioId ?? 'unknown'}`
+
+          // Phase 1 upsert: create minimal record; on conflict only update
+          // studio/zipcode/sourceUrl — do NOT overwrite bio/photo/etc that
+          // Phase 2 may have already filled in.
+          await (prisma as any).instructor.upsert({
+            where: { dedupKey },
+            create: {
+              dedupKey,
+              fullName:      s.fullName,
+              normalizedName,
+              ...(studioId !== null ? { studio: { connect: { id: studioId } } } : {}),
+              studioNameRaw: s.studioName || null,
+              workZipcode:   s.workZipcode,
+              sourceUrl:     s.studioUrl,     // studioUrl carries the profile URL in Phase 1
+              classTypes:    JSON.stringify([]),
+            },
+            update: {
+              // Only update location/studio fields; never clobber detail fields
+              studioNameRaw: s.studioName || null,
+              workZipcode:   s.workZipcode,
+              sourceUrl:     s.studioUrl,
+              ...(studioId !== null
+                ? { studio: { connect: { id: studioId } } }
+                : {}),
+              updatedAt:     new Date(),
+            },
+          })
+
+          instructorsFound++
+        }
+      }
+    )
+
+    await prisma.discoveryRun.update({
+      where: { id: runId },
+      data: {
+        status:      'COMPLETED',
+        studiosFound: instructorsFound,
+        completedAt:  new Date(),
+      },
+    })
+  } catch (err: any) {
+    await prisma.discoveryRun.update({
+      where: { id: runId },
+      data: {
+        status:       'FAILED',
+        errorMessage: err?.message ?? String(err),
+        completedAt:  new Date(),
+      },
+    })
+    throw err
+  }
 }
 
 export default discoveryRoutes

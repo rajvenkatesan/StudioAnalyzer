@@ -12,6 +12,9 @@ import type {
   StudioComparison,
   PricingMatrixEntry,
   PricingRecommendationResponse,
+  InstructorRow,
+  InstructorDiscoverRequest,
+  InstructorEnrichRequest,
 } from '@shared/types'
 
 const BASE = '/api/v1'
@@ -69,6 +72,9 @@ export const api = {
 
     cancelRun: (id: number) =>
       post<{ ok: boolean }>(`/discovery/runs/${id}/cancel`, {}),
+
+    discoverInstructors: (body: InstructorDiscoverRequest) =>
+      post<DiscoverResponse>('/discovery/instructors', body),
   },
 
   // ── Studios ──────────────────────────────────────────────────────────────
@@ -118,6 +124,21 @@ export const api = {
 
     recommendations: (zipcode: string) =>
       get<PricingRecommendationResponse>(`/pricing/recommendations?zipcode=${encodeURIComponent(zipcode)}`),
+  },
+
+  // ── Instructors ───────────────────────────────────────────────────────────
+
+  instructors: {
+    list: (params?: { zipcode?: string; query?: string; classType?: string }) => {
+      const qs = new URLSearchParams()
+      if (params?.zipcode)   qs.set('zipcode',   params.zipcode)
+      if (params?.query)     qs.set('query',      params.query)
+      if (params?.classType) qs.set('classType',  params.classType)
+      return get<InstructorRow[]>(`/instructors${qs.size ? `?${qs}` : ''}`)
+    },
+    get:    (id: number) => get<InstructorRow>(`/instructors/${id}`),
+    enrich: (body: InstructorEnrichRequest) =>
+      post<{ ok: boolean; queued: number }>('/instructors/enrich', body),
   },
 
   // ── Hints (StudioHelper.md) ───────────────────────────────────────────────

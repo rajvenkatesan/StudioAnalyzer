@@ -3,7 +3,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import type { DiscoveryRunSummary } from '@shared/types'
 
-type DiscoveryMode = 'zipcode' | 'franchise'
+type DiscoveryMode = 'zipcode' | 'franchise' | 'instructors'
+
+const CLASS_TYPE_OPTIONS = [
+  'All types', 'Pilates', 'Yoga', 'Barre', 'Cycling', 'HIIT', 'Strength', 'Dance', 'Meditation', 'Boxing',
+]
 
 export default function DiscoverTab() {
   const queryClient = useQueryClient()
@@ -15,6 +19,10 @@ export default function DiscoverTab() {
 
   // Franchise form state
   const [studioName, setStudioName] = useState('')
+
+  // Instructors form state
+  const [instrZipcode, setInstrZipcode] = useState('')
+  const [classType, setClassType] = useState('')
 
   const [submitting, setSubmitting] = useState(false)
   const [activeRun, setActiveRun] = useState<DiscoveryRunSummary | null>(null)
@@ -83,6 +91,27 @@ export default function DiscoverTab() {
     }
   }
 
+  const handleInstructorsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (instrZipcode.length !== 5) return
+    setError(null)
+    setActiveRun(null)
+    setSubmitting(true)
+    try {
+      const { runId } = await api.discovery.discoverInstructors({
+        zipcode: instrZipcode,
+        classType: classType && classType !== 'All types' ? classType : undefined,
+      })
+      const run = await api.discovery.getRun(runId)
+      setActiveRun(run)
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+    } catch (err: any) {
+      setError(err?.message ?? 'Discovery failed — check that the API server is running.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   const isRunning = activeRun?.status === 'PENDING' || activeRun?.status === 'RUNNING'
 
   return (
@@ -112,6 +141,17 @@ export default function DiscoverTab() {
           ].join(' ')}
         >
           By Studio Name
+        </button>
+        <button
+          onClick={() => { setMode('instructors'); setActiveRun(null); setError(null) }}
+          className={[
+            'px-4 py-1.5 text-sm font-medium rounded-md transition-colors',
+            mode === 'instructors'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700',
+          ].join(' ')}
+        >
+          Find Instructors
         </button>
       </div>
 
@@ -191,6 +231,50 @@ export default function DiscoverTab() {
         </form>
       )}
 
+      {/* ── Instructors form ── */}
+      {mode === 'instructors' && (
+        <form onSubmit={handleInstructorsSubmit} className="panel p-5 mb-6">
+          <p className="text-xs text-gray-500 mb-4">
+            Scrape MindBody for instructors near a zipcode, optionally filtered by class type.
+          </p>
+          <div className="flex flex-wrap gap-4 items-end">
+            <div>
+              <label className="label">Zipcode</label>
+              <input
+                className="input w-28"
+                placeholder="94123"
+                value={instrZipcode}
+                onChange={(e) => setInstrZipcode(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                maxLength={5}
+                required
+                disabled={submitting || isRunning}
+              />
+            </div>
+            <div>
+              <label className="label">Class type</label>
+              <select
+                className="input w-48"
+                value={classType}
+                onChange={(e) => setClassType(e.target.value)}
+                disabled={submitting || isRunning}
+              >
+                {CLASS_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt === 'All types' ? '' : opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={submitting || isRunning || instrZipcode.length !== 5}
+            >
+              {isRunning ? 'Running…' : submitting ? 'Starting…' : 'Find Instructors'}
+            </button>
+          </div>
+          <RunStatus activeRun={activeRun} error={error} />
+        </form>
+      )}
+
       {/* Run history */}
       {runs.length > 0 && (
         <div className="panel overflow-hidden">
@@ -206,7 +290,7 @@ export default function DiscoverTab() {
                   <th>Query</th>
                   <th>Scope</th>
                   <th>Status</th>
-                  <th>Studios</th>
+                  <th>Found</th>
                   <th>New</th>
                   <th>Updated</th>
                   <th>Duration</th>
@@ -227,14 +311,28 @@ export default function DiscoverTab() {
                           ? 'bg-purple-100 text-purple-700'
                           : run.discoveryMode === 'refresh'
                           ? 'bg-amber-100 text-amber-700'
+                          : run.discoveryMode === 'instructors'
+                          ? 'bg-teal-100 text-teal-700'
                           : 'bg-blue-100 text-blue-700',
                       ].join(' ')}>
-                        {run.discoveryMode === 'franchise' ? 'Franchise' : run.discoveryMode === 'refresh' ? 'Refresh' : 'Zipcode'}
+                        {run.discoveryMode === 'franchise'
+                          ? 'Franchise'
+                          : run.discoveryMode === 'refresh'
+                          ? 'Refresh'
+                          : run.discoveryMode === 'instructors'
+                          ? 'Instructors'
+                          : 'Zipcode'}
                       </span>
                     </td>
                     <td className="font-medium text-gray-800">{run.searchQuery}</td>
                     <td className="font-mono text-xs text-gray-500">
-                      {run.discoveryMode === 'franchise' ? 'US-wide' : run.discoveryMode === 'refresh' ? '—' : run.zipcode}
+                      {run.discoveryMode === 'franchise'
+                        ? 'US-wide'
+                        : run.discoveryMode === 'refresh'
+                        ? '—'
+                        : run.discoveryMode === 'instructors'
+                        ? run.zipcode.replace('INSTRUCTORS:', '')
+                        : run.zipcode}
                     </td>
                     <td><StatusBadge status={run.status} /></td>
                     <td className="text-center">{run.studiosFound ?? '—'}</td>
@@ -292,6 +390,7 @@ function RunStatus({ activeRun, error }: { activeRun: DiscoveryRunSummary | null
               "{activeRun.searchQuery}"
               {activeRun.discoveryMode === 'zipcode' && ` in ${activeRun.zipcode}`}
               {activeRun.discoveryMode === 'franchise' && ' — all US locations'}
+              {activeRun.discoveryMode === 'instructors' && ` in ${activeRun.zipcode.replace('INSTRUCTORS:', '')}`}
             </span>
             <StatusBadge status={activeRun.status} />
             {isActive && (
