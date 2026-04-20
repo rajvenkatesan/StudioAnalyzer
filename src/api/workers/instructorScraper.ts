@@ -227,6 +227,48 @@ async function clickStaffTab(page: import('playwright').Page): Promise<boolean> 
   return false
 }
 
+/**
+ * After the staff section is visible, click any "See All / View All / Load More"
+ * buttons repeatedly until no more appear (up to 10 iterations).
+ * This ensures MindBody's paginated staff lists are fully expanded.
+ */
+async function expandAllInstructors(page: import('playwright').Page): Promise<void> {
+  const expandSelectors = [
+    'button:has-text("See All")',
+    'button:has-text("View All")',
+    'button:has-text("Show All")',
+    'button:has-text("Show all")',
+    'button:has-text("See all")',
+    'button:has-text("View all")',
+    'button:has-text("Load More")',
+    'button:has-text("Load more")',
+    'button:has-text("Show More")',
+    'button:has-text("Show more")',
+    'a:has-text("See All")',
+    'a:has-text("View All")',
+    '[class*="see-all"], [class*="seeAll"], [class*="SeeAll"]',
+    '[class*="view-all"], [class*="viewAll"], [class*="ViewAll"]',
+    '[class*="load-more"], [class*="loadMore"], [class*="LoadMore"]',
+    '[class*="show-more"], [class*="showMore"], [class*="ShowMore"]',
+  ]
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    let clicked = false
+    for (const sel of expandSelectors) {
+      try {
+        const btn = page.locator(sel).first()
+        if (await btn.isVisible({ timeout: 1500 })) {
+          await btn.click()
+          await sleep(2000)
+          clicked = true
+          break
+        }
+      } catch { /* try next selector */ }
+    }
+    if (!clicked) break   // no expand button found — all instructors are visible
+  }
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export async function scrapeInstructorsFromMindBody(
@@ -308,7 +350,7 @@ export async function scrapeInstructorsFromMindBody(
       return results
     }
 
-    studioUrls = studioUrls.slice(0, 20)
+    studioUrls = studioUrls.slice(0, 50)
     onProgress(`Found ${studioUrls.length} studio pages: ${studioUrls.slice(0, 3).join(', ')}…`)
 
     // ── Step 2: visit each studio page and extract instructors ────────────────
@@ -328,6 +370,10 @@ export async function scrapeInstructorsFromMindBody(
         // Click Staff/Instructors tab if present
         const tabClicked = await clickStaffTab(page)
         if (tabClicked) onProgress(`  ↳ clicked Staff tab on ${studioName}`)
+
+        // Expand "See All / Load More" to get the full instructor list
+        await expandAllInstructors(page)
+        onProgress(`  ↳ expanded all instructors on ${studioName}`)
 
         // Run the eval to extract instructor cards
         type RawInstructor = {

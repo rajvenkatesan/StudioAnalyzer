@@ -16,6 +16,7 @@ type PrismaInstructor = {
   address: string | null
   photoUrl: string | null
   classTypes: string | null
+  studioNameRaw: string | null
   sourceUrl: string | null
   studio: { name: string } | null
 }
@@ -36,7 +37,7 @@ function toRow(i: PrismaInstructor): InstructorRow {
     dedupKey:        i.dedupKey,
     fullName:        i.fullName,
     studioId:        i.studioId,
-    studioName:      i.studio?.name ?? null,
+    studioName:      i.studio?.name ?? i.studioNameRaw ?? null,
     workZipcode:     i.workZipcode,
     email:           i.email,
     phone:           i.phone,

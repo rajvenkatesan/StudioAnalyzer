@@ -154,6 +154,7 @@ model Instructor {
   address         String?
   photoUrl        String?
   classTypes      String?  // JSON array as string, e.g. '["Pilates","Yoga"]'
+  studioNameRaw   String?  // scraped studio name — populated even when studioId is null
   sourceUrl       String?  // MindBody profile URL
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
