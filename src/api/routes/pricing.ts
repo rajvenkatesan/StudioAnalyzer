@@ -3,7 +3,7 @@ import { FastifyPluginAsync } from 'fastify'
 const zipcodeDb = require('zipcodes')
 import prisma from '../lib/prisma'
 import { getCOLIndex, colDescription } from '../lib/colIndex'
-import type { PricingPlanRow, PricingMatrixEntry, PricingRecommendationRow, PricingRecommendationResponse } from '../../shared/types'
+import type { PricingPlanRow, PricingMatrixEntry, PricingRecommendationRow, PricingRecommendationResponse, ComparableStudio } from '../../shared/types'
 
 function toPricingRow(p: any): PricingPlanRow {
   return {
@@ -151,14 +151,36 @@ const pricingRoutes: FastifyPluginAsync = async (app) => {
         return sorted[Math.min(i, sorted.length - 1)]
       }
 
+      // Progressive COL bands: try tightest first, widen until we have data
+      const COL_BANDS = [5, 10, 15, 25]
+
       const recommendations: PricingRecommendationRow[] = TIERS.map((tier) => {
-        // Filter plans for this tier
-        const matches = allPlans.filter((p) => {
+        // Base tier predicate (plan type + classCount)
+        const matchesTier = (p: typeof allPlans[0]) => {
           if (p.planType !== tier.planType) return false
           if (tier.classCount === 'any') return true
           if (tier.classCount === null) return p.classCount === null
           return p.classCount === tier.classCount
-        })
+        }
+
+        // Find the tightest band that has at least one match
+        let matches: typeof allPlans = []
+        let colBand: number | null = null
+
+        for (const band of COL_BANDS) {
+          const candidates = allPlans.filter((p) => {
+            if (!matchesTier(p)) return false
+            const city   = p.studio.locations[0]?.city  ?? null
+            const state  = p.studio.locations[0]?.state ?? null
+            const srcCOL = getCOLIndex(city, state)
+            return Math.abs(srcCOL - targetCOL) <= band
+          })
+          if (candidates.length > 0) {
+            matches = candidates
+            colBand = band
+            break
+          }
+        }
 
         if (matches.length === 0) {
           return {
@@ -167,14 +189,31 @@ const pricingRoutes: FastifyPluginAsync = async (app) => {
             classCount: tier.classCount === 'any' ? null : tier.classCount,
             dataPoints: 0,
             recommended: null, low: null, high: null, rawMedian: null,
+            colBand: null,
+            comparables: [],
           }
         }
 
-        // Normalise each plan's price to the national baseline
+        // Build comparables list — actual prices so users can see what comparable studios charge
+        const comparables: ComparableStudio[] = matches
+          .map((p) => {
+            const city   = p.studio.locations[0]?.city  ?? null
+            const state  = p.studio.locations[0]?.state ?? null
+            return {
+              studioName: p.studio.name,
+              city,
+              state,
+              colIndex: getCOLIndex(city, state),
+              price:    p.priceAmount,
+            }
+          })
+          .sort((a, b) => a.price - b.price)
+
+        // Normalise each plan's price to the national baseline, then scale to target
         const normalised = matches
           .map((p) => {
-            const city  = p.studio.locations[0]?.city  ?? null
-            const state = p.studio.locations[0]?.state ?? null
+            const city   = p.studio.locations[0]?.city  ?? null
+            const state  = p.studio.locations[0]?.state ?? null
             const srcCOL = getCOLIndex(city, state)
             return p.priceAmount * (100 / srcCOL)
           })
@@ -183,18 +222,19 @@ const pricingRoutes: FastifyPluginAsync = async (app) => {
         const rawMedian = pct(normalised, 0.5)
         const rawLow    = pct(normalised, 0.25)
         const rawHigh   = pct(normalised, 0.75)
-
-        const scale = targetCOL / 100
+        const scale     = targetCOL / 100
 
         return {
           key: tier.key, label: tier.label,
-          planType: tier.planType as any,
+          planType:   tier.planType as any,
           classCount: tier.classCount === 'any' ? null : tier.classCount,
           dataPoints:  matches.length,
           recommended: roundToFive(rawMedian * scale),
           low:         roundToFive(rawLow    * scale),
           high:        roundToFive(rawHigh   * scale),
           rawMedian:   Math.round(rawMedian),
+          colBand,
+          comparables,
         }
       })
 
