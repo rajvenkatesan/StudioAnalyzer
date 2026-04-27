@@ -605,11 +605,63 @@ const SCHEDULE_EVAL = `(function() {
     }
   }
 
+  // ── Pass 1b: Sub-element strategy for card-based DOM layouts ─────────────────
+  // Handles pages where each class card has separate child elements for class name
+  // and time (e.g. JETSET Pilates). The parent card matches [class*="class"] but
+  // HOURS_LINE filters it because the card text contains a time range
+  // ("7:00am - 7:50am"). This pass finds class-name sub-elements directly,
+  // looks for a sibling class-time element for the start time, and locates the
+  // day by finding the nearest schedule-day ancestor and reading its day header.
+  var classNameEls = Array.from(document.querySelectorAll('[class*="class-name"]'));
+  for (var cni = 0; cni < classNameEls.length; cni++) {
+    var nameEl = classNameEls[cni];
+    var cnText = (nameEl.innerText || '').trim();
+    if (!cnText || cnText.length > 100 || HOURS_LINE.test(cnText)) continue;
+    var cardEl = nameEl.parentElement;
+    if (!cardEl) continue;
+    var timeEl1b = cardEl.querySelector('[class*="class-time"],[class*="-time"]');
+    if (!timeEl1b) continue;
+    var timeToks1b = ((timeEl1b.innerText || '').trim()).split(/\\s+/);
+    var parsedT = parseTime(timeToks1b[0] || '', timeToks1b[1] || '');
+    if (!parsedT) continue;
+    var st1b = (parsedT.hour < 10 ? '0' : '') + parsedT.hour + ':' + (parsedT.min < 10 ? '0' : '') + parsedT.min;
+    // Walk up to find a schedule-day ancestor, then read its day header
+    var dayAncestor = cardEl.parentElement;
+    var day1b = null;
+    for (var dsi = 0; dsi < 5 && dayAncestor; dsi++) {
+      if (/schedule.?day/i.test(dayAncestor.className || '')) {
+        var dayHdrEl = dayAncestor.querySelector('[class*="day-header-day"],[class*="day-label"],[class*="day-name"],[data-day]');
+        if (dayHdrEl) {
+          day1b = detectDayInText(dayHdrEl.getAttribute('data-day') || (dayHdrEl.innerText || ''));
+        }
+        if (!day1b) {
+          day1b = detectDayInText((dayAncestor.innerText || '').substring(0, 30));
+        }
+        break;
+      }
+      dayAncestor = dayAncestor.parentElement;
+    }
+    if (!day1b) day1b = walkAncestorsForDay(nameEl);
+    if (!day1b) continue;
+    var key1b = day1b + '_' + st1b;
+    if (seen[key1b]) continue;
+    seen[key1b] = true;
+    var statusEl1b = cardEl.querySelector('[class*="class-status"],[class*="spots"],[class*="availability"]');
+    var statusText1b = statusEl1b ? (statusEl1b.innerText || '') : '';
+    var spotsMatch1b = statusText1b.match(spotsRegex);
+    var sa1b = spotsMatch1b ? parseInt(spotsMatch1b[1], 10) : undefined;
+    var teacherEl1b = cardEl.querySelector('[class*="class-teacher"],[class*="instructor"],[class*="teacher"]');
+    var instructor1b = teacherEl1b ? (teacherEl1b.innerText || '').trim() : undefined;
+    results.push({ day: day1b, startTime: st1b, className: cnText,
+      spotsAvailable: sa1b, dataAvailable: sa1b !== undefined, durationMinutes: 60,
+      instructor: instructor1b });
+  }
+
   // ── Pass 2: Text-based sweep ──────────────────────────────────────────────
   // Always runs (not just when Pass 1 found nothing) so it can pick up days
   // whose schedule-day container exceeds the 300-char limit and was skipped
-  // by Pass 1.  Deduplication via the "seen" dict prevents double-counting entries
-  // that Pass 1 already captured.
+  // by Pass 1 or Pass 1b.  Deduplication via the "seen" dict prevents
+  // double-counting entries already captured by earlier passes.
   //
   // Filter hours-like lines, then JOIN the remaining lines into one token stream
   // before calling parseTextTokens. This is critical for schedules like Jetset
@@ -643,6 +695,7 @@ async function extractScheduleWithDays(page: Page): Promise<ScrapedScheduleRow[]
     durationMinutes: r.durationMinutes,
     spotsAvailable: r.spotsAvailable,
     dataAvailable: r.dataAvailable,
+    instructor: r.instructor,
   }))
 }
 
