@@ -126,15 +126,142 @@ export async function scrapeStudioWebsite(
 
 // ── Solidcore ─────────────────────────────────────────────────────────────────
 //
-// Solidcore's website changed its URL structure. /pricing and /classes no
-// longer exist — both redirect to the homepage. The individual studio page
-// (e.g. /studios/marina) is the correct entry point. It shows a schedule
-// widget that lazy-loads after the page settles, so we need a longer wait
-// and a scroll pass to trigger the lazy loading.
-//
-// Pricing requires interactive studio selection on /membership-perks and
-// cannot be extracted without user interaction; we still attempt it but
-// expect it to return empty most of the time.
+// Entry point: studio-specific page (e.g. /studios/marina)
+//   Pricing: click "View All Pricing & Packages" → navigates to
+//     /membership-perks?siteId=&locationId= with studio pre-selected.
+//   Schedule: horizontal day-button strip (class "w-[90px]"). Button 0 = today.
+//     Click buttons 1–7 for tomorrow + 6 more days and extract class cards
+//     (data-testid="class-card-*").
+
+function solidcoreDayToWeekday(abbrev: string): import('../../shared/types').DayOfWeek {
+  const map: Record<string, import('../../shared/types').DayOfWeek> = {
+    mon: 'MON', tue: 'TUE', wed: 'WED', thu: 'THU', fri: 'FRI', sat: 'SAT', sun: 'SUN',
+  }
+  return map[abbrev.toLowerCase()] ?? 'MON'
+}
+
+async function extractSolidcoreScheduleForDay(
+  page: Page,
+  dayOfWeek: import('../../shared/types').DayOfWeek,
+): Promise<ScrapedScheduleRow[]> {
+  return page.evaluate(
+    ({ dow }) => {
+      const cards = Array.from(document.querySelectorAll('[data-testid^="class-card-"]'))
+      const rows: {
+        className: string
+        dayOfWeek: string
+        startTime: string
+        durationMinutes: number
+        instructor?: string
+        dataAvailable: boolean
+      }[] = []
+
+      for (const card of cards) {
+        // Only include cards that are currently visible (the selected day's cards)
+        if ((card as HTMLElement).offsetHeight === 0) continue
+
+        const tid = card.getAttribute('data-testid')!.replace('class-card-', '')
+        const timeEl = card.querySelector(`[data-testid="class-time-${tid}"]`) as HTMLElement | null
+        const rawTime = timeEl?.innerText?.trim() ?? ''
+        const tm = rawTime.match(
+          /(\d{1,2}):(\d{2})\s*(AM|PM)\s*-\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i,
+        )
+        if (!tm) continue
+
+        let sh = parseInt(tm[1])
+        const sm = parseInt(tm[2])
+        const sa = tm[3].toUpperCase()
+        let eh = parseInt(tm[4])
+        const em = parseInt(tm[5])
+        const ea = tm[6].toUpperCase()
+        if (sa === 'PM' && sh !== 12) sh += 12
+        if (sa === 'AM' && sh === 12) sh = 0
+        if (ea === 'PM' && eh !== 12) eh += 12
+        if (ea === 'AM' && eh === 12) eh = 0
+
+        const startMins = sh * 60 + sm
+        const duration = eh * 60 + em - startMins
+        const startTime = `${String(sh).padStart(2, '0')}:${String(sm).padStart(2, '0')}`
+
+        const classNameEl = card.querySelector('button.text-2xl') as HTMLElement | null
+        const className = classNameEl?.innerText?.trim() ?? ''
+        if (!className) continue
+
+        const allBtns = Array.from(card.querySelectorAll('button')) as HTMLElement[]
+        const instBtn = allBtns.find((b) => (b.innerText ?? '').trim().startsWith('w/'))
+        const instRaw = instBtn?.innerText?.trim() ?? ''
+        const instructor = instRaw.replace(/^w\/\s*/, '').split('view coach')[0].trim() || undefined
+
+        rows.push({ className, dayOfWeek: dow, startTime, durationMinutes: duration, instructor, dataAvailable: true })
+      }
+      return rows
+    },
+    { dow: dayOfWeek },
+  ) as Promise<ScrapedScheduleRow[]>
+}
+
+function solidcoreClassCount(planName: string): number | undefined {
+  const s = planName.toLowerCase()
+  if (/\bsingle\b/.test(s) || /\bcoach[- ]in[- ]training\b/.test(s)) return 1
+  // "2 week unlimited" → 2*7 = 14
+  const weekMatch = s.match(/(\d+)\s*[- ]?week[- ]?unlimited/)
+  if (weekMatch) return parseInt(weekMatch[1]) * 7
+  if (/\bunlimited\b/.test(s)) return 16  // monthly unlimited → assume 16
+  // "4/mo" or "8/mo" → 4 or 8
+  const moMatch = s.match(/(\d+)\s*\/\s*mo/)
+  if (moMatch) return parseInt(moMatch[1])
+  // "10-class pack", "5-class pack", "4 pack"
+  const packMatch = s.match(/(\d+)[- ]*class[- ]*pack/) ?? s.match(/(\d+)[- ]*pack/)
+  if (packMatch) return parseInt(packMatch[1])
+  return undefined
+}
+
+function solidcoreValidityDays(notesOrDescription: string | undefined): number | undefined {
+  if (!notesOrDescription) return undefined
+  const m = notesOrDescription.match(/[Ee]xpires\s+(\d+)\s+days/)
+  return m ? parseInt(m[1]) : undefined
+}
+
+async function extractSolidcorePricing(page: Page): Promise<ScrapedPricingRow[]> {
+  // Prices are loaded asynchronously; wait until at least one "$" appears in the page
+  try {
+    await page.waitForFunction(
+      () => /\$\d+/.test(document.body.innerText ?? ''),
+      { timeout: 8_000 },
+    )
+  } catch { return [] }
+
+  const lines = await page.evaluate(() =>
+    (document.body.innerText ?? '').split('\n').map((l: string) => l.trim()).filter((l: string) => l),
+  )
+
+  const plans: ScrapedPricingRow[] = []
+  let planType: ScrapedPricingRow['planType'] = 'DROP_IN'
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (/^NEW CLIENT/i.test(line)) { planType = 'INTRO'; continue }
+    if (/^MEMBERSHIPS$/i.test(line)) { planType = 'MONTHLY'; continue }
+    if (/^12-Month$/i.test(line)) { planType = 'ANNUAL'; continue }
+    if (/^(6-Month|Monthly)$/i.test(line)) { planType = 'MONTHLY'; continue }
+    if (/^PACKAGES$/i.test(line)) { planType = 'CLASS_PACK'; continue }
+
+    const pm = line.match(/^\$([0-9,]+)(?:\/mo)?/)
+    if (!pm) continue
+    const planName = lines[i - 1] ?? ''
+    if (!planName || /^(Buy|Expires|Auto|Max|Valid|Subject|\*|SELECT)/i.test(planName)) continue
+
+    const amount = parseFloat(pm[1].replace(/,/g, ''))
+    // Notes are 2 lines below (line i+1 is "Buy", line i+2 is the description)
+    const notes = lines[i + 2] && !/^(Buy|\*)/.test(lines[i + 2]) ? lines[i + 2].substring(0, 200) : undefined
+
+    const classCount = solidcoreClassCount(planName)
+    const validityDays = solidcoreValidityDays(notes)
+
+    plans.push({ planName, planType, priceAmount: amount, currency: 'USD', classCount, validityDays, notes })
+  }
+  return plans
+}
 
 async function scrapeSolidcore(page: Page, baseUrl: string): Promise<ScrapeResult> {
   const result: ScrapeResult = {
@@ -146,53 +273,64 @@ async function scrapeSolidcore(page: Page, baseUrl: string): Promise<ScrapeResul
     hoursDataAvailable: false,
   }
 
-  // For a specific studio page (pathDepth ≥ 1, e.g. /studios/marina),
-  // the page itself contains the schedule widget. Scrape it directly.
-  // For the brand root we fall through to the generic path approach below.
   const urlPath = (() => { try { return new URL(baseUrl).pathname } catch { return '/' } })()
   const pathDepth = urlPath.split('/').filter(Boolean).length
 
   if (pathDepth >= 1) {
-    // ── Studio-specific page ────────────────────────────────────────────────
-    try {
-      await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 })
-      // Scroll the page to trigger lazy loading of the schedule widget
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2))
-      await sleep(CRAWL_DELAY + 4_000)
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
-      await sleep(2_000)
-      result.schedule = await extractScheduleWithDays(page)
-      result.scheduleDataAvailable = result.schedule.length > 0
-      const hours = await extractHoursGeneric(page)
-      if (Object.values(hours).some((v) => v !== null)) {
-        result.hoursOfOperation = hours
-        result.hoursDataAvailable = true
-      }
-    } catch { /* schedule unavailable */ }
+    // ── Studio page ───────────────────────────────────────────────────────────
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 })
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2))
+    await sleep(CRAWL_DELAY + 4_000)
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+    await sleep(2_000)
 
-    // Pricing: solidcore requires interactive studio selection on /membership-perks
-    // and cannot be scraped without user interaction. Attempt it anyway; if the
-    // page ever renders prices without interaction, the generic extractor will
-    // find them. Otherwise this returns empty with no error.
-    try {
-      await page.goto(new URL('/membership-perks', baseUrl).toString(), { waitUntil: 'domcontentloaded', timeout: 15_000 })
-      await sleep(CRAWL_DELAY + 2_000)
-      result.pricing = await extractPricingGeneric(page)
-      result.pricingDataAvailable = result.pricing.length > 0
-    } catch { /* pricing unavailable */ }
-
-    if (!result.scheduleDataAvailable && !result.pricingDataAvailable) {
-      result.warningMessage =
-        'Solidcore schedule requires login and pricing requires studio selection — no data could be extracted automatically.'
+    // ── Pricing: click "View All Pricing & Packages" ──────────────────────────
+    const pricingBtn = page.locator('button').filter({ hasText: /View All Pricing/i }).first()
+    if (await pricingBtn.count() > 0) {
+      try {
+        await Promise.all([
+          page.waitForURL('**/membership-perks**', { timeout: 8_000 }),
+          pricingBtn.click(),
+        ])
+        await sleep(CRAWL_DELAY + 2_000)
+        result.pricing = await extractSolidcorePricing(page)
+        result.pricingDataAvailable = result.pricing.length > 0
+        await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15_000 })
+        // Re-wait for schedule widget after navigating back
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2))
+        await sleep(CRAWL_DELAY + 3_000)
+      } catch { /* pricing unavailable */ }
     }
+
+    // ── Schedule: click tomorrow + 6 more days ────────────────────────────────
+    const DAY_BTN = 'button.w-\\[90px\\]'
+    const dayBtnCount = await page.locator(DAY_BTN).count()
+    // Button 0 = today, scrape buttons 1–7 (tomorrow through 7 days)
+    const limit = Math.min(dayBtnCount, 8) // indices 1..7
+
+    for (let i = 1; i < limit; i++) {
+      const btn = page.locator(DAY_BTN).nth(i)
+      if (await btn.count() === 0) break
+      const btnText = ((await btn.textContent()) ?? '').trim().replace(/\s+/g, '')
+      const abbrev = btnText.match(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)/i)?.[1] ?? ''
+      const dayOfWeek = solidcoreDayToWeekday(abbrev)
+
+      await btn.click()
+      await sleep(1_500)
+
+      const classes = await extractSolidcoreScheduleForDay(page, dayOfWeek)
+      result.schedule.push(...classes)
+    }
+
+    result.scheduleDataAvailable = result.schedule.length > 0
     return result
   }
 
-  // ── Brand root URL — fall back to schedule/pricing hint paths ──────────────
+  // ── Brand root — try /membership-perks for pricing, /studios for schedule ───
   try {
     await page.goto(new URL('/membership-perks', baseUrl).toString(), { waitUntil: 'domcontentloaded', timeout: 15_000 })
     await sleep(CRAWL_DELAY)
-    result.pricing = await extractPricingGeneric(page)
+    result.pricing = await extractSolidcorePricing(page)
     result.pricingDataAvailable = result.pricing.length > 0
   } catch { result.pricingDataAvailable = false }
 
