@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from 'fastify'
 import prisma from '../lib/prisma'
 import { runRefresh } from '../workers/discoveryRunner'
 import { DAYS_OF_WEEK } from '../../shared/types'
-import type { DayOfWeek, StudioSummary, DiscoverResponse } from '../../shared/types'
+import type { DayOfWeek, StudioSummary, DiscoverResponse, CreateStudioRequest } from '../../shared/types'
 
 const studioRoutes: FastifyPluginAsync = async (app) => {
   // GET /api/v1/studios?zipcode=&query=&studioTypeId=
@@ -27,6 +27,7 @@ const studioRoutes: FastifyPluginAsync = async (app) => {
               city: true,
               state: true,
               postalCode: true,
+              status: true,
               updatedAt: true,
             },
           },
@@ -97,6 +98,7 @@ const studioRoutes: FastifyPluginAsync = async (app) => {
               city: l.city,
               state: l.state,
               postalCode: l.postalCode,
+              status: (l.status ?? 'unknown') as 'unknown' | 'open' | 'upcoming',
             })),
             weeklyClassCount,
             dailyClassCounts: dailyCounts,
@@ -146,6 +148,50 @@ const studioRoutes: FastifyPluginAsync = async (app) => {
     if (!name || !slug) return reply.status(400).send({ error: 'name and slug required' })
     const type = await prisma.studioType.create({ data: { name, slug } })
     return reply.status(201).send(type)
+  })
+
+  // POST /api/v1/studios — manually add a new studio + location
+  app.post<{ Body: CreateStudioRequest }>('/studios', async (request, reply) => {
+    const {
+      name,
+      websiteUrl,
+      phone,
+      brandName,
+      addressLine1,
+      addressLine2,
+      city,
+      state,
+      postalCode,
+      country = 'US',
+    } = request.body
+
+    if (!name || !brandName || !addressLine1 || !city || !state || !postalCode) {
+      return reply.status(400).send({ error: 'name, brandName, addressLine1, city, state, postalCode are required' } as any)
+    }
+
+    const slug = brandName.toLowerCase().replace(/[^a-z0-9]+/g, '')
+    const normalizedBrand = slug
+
+    // Upsert StudioType by slug
+    const studioType = await prisma.studioType.upsert({
+      where: { slug },
+      create: { name: brandName, slug },
+      update: {},
+    })
+
+    // Upsert Studio by (normalizedBrand, studioTypeId)
+    const studio = await prisma.studio.upsert({
+      where: { normalizedBrand_studioTypeId: { normalizedBrand, studioTypeId: studioType.id } },
+      create: { studioTypeId: studioType.id, name, normalizedBrand, websiteUrl, phone },
+      update: { name, websiteUrl, phone },
+    })
+
+    // Create Location
+    const location = await prisma.location.create({
+      data: { studioId: studio.id, addressLine1, addressLine2, city, state, postalCode, country },
+    })
+
+    return reply.status(201).send({ studio, location })
   })
 
   // ── Shared helper: wipe all scraped data for a set of studio IDs ─────────────

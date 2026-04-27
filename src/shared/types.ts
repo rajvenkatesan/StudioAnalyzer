@@ -51,6 +51,8 @@ export interface DiscoveryRunSummary {
   durationMs: number | null
 }
 
+export type StudioStatus = 'unknown' | 'open' | 'upcoming'
+
 export interface StudioLocationSummary {
   id: number
   addressLine1: string
@@ -58,6 +60,20 @@ export interface StudioLocationSummary {
   city: string
   state: string
   postalCode: string
+  status: StudioStatus
+}
+
+export interface CreateStudioRequest {
+  name: string
+  websiteUrl?: string
+  phone?: string
+  brandName: string      // used as StudioType name and slug (lowercased)
+  addressLine1: string
+  addressLine2?: string
+  city: string
+  state: string
+  postalCode: string
+  country?: string
 }
 
 export interface StudioSummary {
@@ -175,6 +191,7 @@ export interface PricingMatrixEntry {
   studioType: string
   city: string | null
   state: string | null
+  status: StudioStatus
   pricingPlans: PricingPlanRow[]
 }
 

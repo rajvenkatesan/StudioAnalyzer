@@ -33,6 +33,7 @@ export interface ScrapeResult {
   pricingDataAvailable: boolean
   hoursDataAvailable: boolean
   warningMessage?: string
+  studioStatus?: 'open' | 'upcoming' | 'unknown'
 }
 
 let browserInstance: Browser | null = null
@@ -191,6 +192,92 @@ const SPIDER_SKIP_PATTERN =
   /\/(about|contact|blog|faq|press|careers|jobs|team|privacy|terms|news|home|gift|shop|store|buy|cart|checkout|login|signup|register|account|refer|affiliate|franchise|search|tag|category|author)\b/i
 
 /**
+ * Evaluates on the locations listing page and returns a map of
+ * { pathname (lowercased, trailing-slash stripped) → "open" | "upcoming" }.
+ * Tries ARIA tablist/tabpanel first, then falls back to scanning for elements
+ * whose direct text content is exactly "Open" or "Upcoming" and reading their
+ * nearest sibling container for anchor links.
+ */
+const STATUS_EVAL = `(function() {
+  var results = {};
+
+  // Strategy 1: ARIA tablist / tabpanel
+  var tabBtns = Array.from(document.querySelectorAll('[role="tab"]'));
+  if (tabBtns.length > 0) {
+    for (var i = 0; i < tabBtns.length; i++) {
+      var btn = tabBtns[i];
+      var txt = (btn.textContent || '').trim().toLowerCase();
+      var st = txt === 'open' ? 'open' : txt === 'upcoming' ? 'upcoming' : null;
+      if (!st) continue;
+      var panelId = btn.getAttribute('aria-controls');
+      var panel = panelId ? document.getElementById(panelId) : null;
+      if (!panel) {
+        var panels = document.querySelectorAll('[role="tabpanel"]');
+        if (panels[i]) panel = panels[i];
+      }
+      if (panel) {
+        var as = panel.querySelectorAll('a[href]');
+        for (var j = 0; j < as.length; j++) {
+          var path = as[j].pathname.replace(/\\/$/, '').toLowerCase();
+          if (path && path !== '/') results[path] = st;
+        }
+      }
+    }
+  }
+
+  // Strategy 2: elements whose own text is "open" or "upcoming" — sibling container
+  if (Object.keys(results).length === 0) {
+    var els = Array.from(document.querySelectorAll('*'));
+    for (var k = 0; k < els.length; k++) {
+      var el = els[k];
+      var directText = Array.from(el.childNodes)
+        .filter(function(n) { return n.nodeType === 3; })
+        .map(function(n) { return (n.textContent || '').trim(); })
+        .join('').trim().toLowerCase();
+      if (directText !== 'open' && directText !== 'upcoming') continue;
+      var sect = directText === 'open' ? 'open' : 'upcoming';
+      var container = el.nextElementSibling ||
+        (el.parentElement && el.parentElement.nextElementSibling);
+      if (container) {
+        var links = container.querySelectorAll('a[href]');
+        for (var m = 0; m < links.length; m++) {
+          var lp = links[m].pathname.replace(/\\/$/, '').toLowerCase();
+          if (lp && lp !== '/') results[lp] = sect;
+        }
+      }
+    }
+  }
+
+  return results;
+})()`
+
+/**
+ * Navigate to the brand's locations listing page and determine whether the
+ * given locationUrl is listed under the "Open" or "Upcoming" tab.
+ * Returns 'unknown' when no tab structure is found or the URL isn't listed.
+ */
+async function detectLocationStatus(
+  page: Page,
+  locationsPageUrl: string,
+  locationUrl: string
+): Promise<'open' | 'upcoming' | 'unknown'> {
+  try {
+    const ok = await tryGoto(page, locationsPageUrl)
+    if (!ok) return 'unknown'
+    const statusMap = await page.evaluate(STATUS_EVAL) as Record<string, string>
+    const targetPath = (() => {
+      try { return new URL(locationUrl).pathname.replace(/\/$/, '').toLowerCase() }
+      catch { return '' }
+    })()
+    const found = statusMap[targetPath]
+    if (found === 'open' || found === 'upcoming') return found
+    return 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+/**
  * Evaluate string that collects all same-origin links from the current page,
  * excluding common navigation / non-location destinations.
  * Written as a string literal so esbuild never injects __name into it.
@@ -247,6 +334,12 @@ async function scrapeWithLocationsHint(
     return { ...result, warningMessage: `Could not load locations page: ${locationsPageUrl}` }
   }
 
+  // Capture Open/Upcoming status map before navigating away
+  let statusMap: Record<string, string> = {}
+  try {
+    statusMap = await page.evaluate(STATUS_EVAL) as Record<string, string>
+  } catch { /* status detection is best-effort */ }
+
   // Collect all same-origin links from the listing page
   let locationLinks: string[] = []
   try {
@@ -263,6 +356,7 @@ async function scrapeWithLocationsHint(
   // Visit each location page (up to MAX_LOCATION_PAGES)
   const seenScheduleKeys = new Set<string>()
   const seenPricingKeys = new Set<string>()
+  let usedLocationUrl: string | null = null
 
   for (const locationUrl of locationLinks.slice(0, MAX_LOCATION_PAGES)) {
     // Determine which URLs to visit for schedule and pricing
@@ -285,6 +379,7 @@ async function scrapeWithLocationsHint(
           result.schedule.push(row)
         }
       }
+      if (sched.length > 0) usedLocationUrl = locationUrl
 
       // Also grab pricing opportunistically if same URL
       if (pricingUrl === scheduleUrl && result.pricing.length === 0) {
@@ -321,6 +416,17 @@ async function scrapeWithLocationsHint(
 
   result.scheduleDataAvailable = result.schedule.length > 0
   result.pricingDataAvailable  = result.pricing.length > 0
+
+  // Resolve Open/Upcoming status for the location that supplied the schedule
+  if (usedLocationUrl) {
+    const targetPath = (() => {
+      try { return new URL(usedLocationUrl).pathname.replace(/\/$/, '').toLowerCase() }
+      catch { return '' }
+    })()
+    const found = statusMap[targetPath]
+    result.studioStatus = (found === 'open' || found === 'upcoming') ? found : 'unknown'
+  }
+
   return result
 }
 
@@ -433,6 +539,12 @@ async function scrapeGeneric(page: Page, baseUrl: string, hint?: StudioHint): Pr
 
   result.pricingDataAvailable  = result.pricing.length > 0
   result.scheduleDataAvailable = result.schedule.length > 0
+
+  // If this brand has a locations page, detect whether this location is Open or Upcoming
+  if (hint?.locationsPage) {
+    result.studioStatus = await detectLocationStatus(page, hint.locationsPage, baseUrl)
+  }
+
   return result
 }
 

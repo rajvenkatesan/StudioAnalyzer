@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, CSSProperties } from 'react'
 import { api } from '../lib/api'
-import type { PricingMatrixEntry, PricingPlanRow, PlanType } from '@shared/types'
+import type { PricingMatrixEntry, PricingPlanRow, PlanType, StudioStatus } from '@shared/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -83,6 +83,7 @@ interface StudioRow {
   studioType: string
   city:       string | null
   state:      string | null
+  status:     StudioStatus
   prices:     Record<string, number | null>  // colKey → cheapest matching price
 }
 
@@ -99,6 +100,7 @@ function buildRows(data: PricingMatrixEntry[]): StudioRow[] {
       studioType: s.studioType,
       city:       s.city,
       state:      s.state,
+      status:     s.status ?? 'unknown',
       prices,
     }
   })
@@ -133,11 +135,20 @@ function toggleSort(col: string, s: ColSort): ColSort {
 
 // ── Shared cell components ────────────────────────────────────────────────────
 
-const StudioCell = ({ name, type }: { name: string; type: string }) => (
+function PricingStatusBadge({ status }: { status: StudioStatus }) {
+  if (status === 'open')     return <span className="ml-1.5 inline-flex items-center px-1.5 py-0 rounded text-[9px] font-semibold bg-green-100 text-green-700">Open</span>
+  if (status === 'upcoming') return <span className="ml-1.5 inline-flex items-center px-1.5 py-0 rounded text-[9px] font-semibold bg-amber-100 text-amber-700">Upcoming</span>
+  return null
+}
+
+const StudioCell = ({ name, type, status }: { name: string; type: string; status?: StudioStatus }) => (
   <td className="sticky left-0 z-10 bg-inherit px-3 py-2 text-sm font-medium text-gray-900
                  whitespace-nowrap border-r border-gray-100"
-      style={{ minWidth: 200, maxWidth: 260 }}>
-    <div className="truncate" title={name}>{name}</div>
+      style={{ minWidth: 200, maxWidth: 280 }}>
+    <div className="flex items-center">
+      <span className="truncate" title={name}>{name}</span>
+      {status && <PricingStatusBadge status={status} />}
+    </div>
     <div className="text-[10px] text-gray-400 truncate">{type}</div>
   </td>
 )
@@ -267,7 +278,7 @@ function Overview({ rows }: { rows: StudioRow[] }) {
         <tbody className="divide-y divide-gray-100">
           {sorted.map((row, i) => (
             <tr key={row.studioId} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'}>
-              <StudioCell name={row.studioName} type={row.studioType} />
+              <StudioCell name={row.studioName} type={row.studioType} status={row.status} />
               <CityCell   city={row.city} state={row.state} />
               {COL_DEFS.map((col) => {
                 const val   = row.prices[col.key]
@@ -308,6 +319,7 @@ interface DetailRow extends PricingPlanRow {
   studioType: string
   city:       string | null
   state:      string | null
+  status:     StudioStatus
 }
 
 function DetailTable({ planType, data }: { planType: PlanType; data: PricingMatrixEntry[] }) {
@@ -324,7 +336,7 @@ function DetailTable({ planType, data }: { planType: PlanType; data: PricingMatr
     data.flatMap((s) =>
       s.pricingPlans
         .filter((p) => p.planType === planType)
-        .map((p) => ({ ...p, studioName: s.studioName, studioType: s.studioType, city: s.city, state: s.state }))
+        .map((p) => ({ ...p, studioName: s.studioName, studioType: s.studioType, city: s.city, state: s.state, status: s.status ?? 'unknown' as StudioStatus }))
     ), [data, planType])
 
   const sorted = useMemo(() => {
@@ -388,7 +400,7 @@ function DetailTable({ planType, data }: { planType: PlanType; data: PricingMatr
             const annualMo = row.priceAmount / 12
             return (
               <tr key={`${row.id}-${i}`} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
-                <StudioCell name={row.studioName} type={row.studioType} />
+                <StudioCell name={row.studioName} type={row.studioType} status={row.status} />
                 <CityCell city={row.city} state={row.state} />
 
                 {/* Package name */}

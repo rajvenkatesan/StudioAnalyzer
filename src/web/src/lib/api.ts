@@ -15,6 +15,7 @@ import type {
   InstructorRow,
   InstructorDiscoverRequest,
   InstructorEnrichRequest,
+  CreateStudioRequest,
 } from '@shared/types'
 
 const BASE = '/api/v1'
@@ -87,6 +88,8 @@ export const api = {
       if (params?.studioTypeId) qs.set('studioTypeId', String(params.studioTypeId))
       return get<StudioSummary[]>(`/studios${qs.size ? `?${qs}` : ''}`)
     },
+
+    create: (body: CreateStudioRequest) => post<{ studio: any; location: any }>('/studios', body),
 
     get: (id: number) => get<any>(`/studios/${id}`),
 

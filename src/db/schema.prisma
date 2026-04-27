@@ -11,9 +11,10 @@ datasource db {
 // ─── Note: SQLite does not support Prisma enums.
 // ─── All enum-like fields use String with valid values documented below.
 //
-//  dayOfWeek   : "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN"
-//  planType    : "DROP_IN" | "CLASS_PACK" | "MONTHLY" | "ANNUAL"
-//  status      : "PENDING" | "RUNNING" | "COMPLETED" | "FAILED"
+//  dayOfWeek        : "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN"
+//  planType         : "DROP_IN" | "CLASS_PACK" | "MONTHLY" | "ANNUAL"
+//  DiscoveryRun.status : "PENDING" | "RUNNING" | "COMPLETED" | "FAILED"
+//  Location.status  : "unknown" | "open" | "upcoming"
 
 // ─── Models ───────────────────────────────────────────────────────────────────
 
@@ -56,6 +57,7 @@ model Location {
   latitude       Float?
   longitude      Float?
   googlePlaceId  String?            @unique
+  status         String             @default("unknown") // "unknown" | "open" | "upcoming"
   hours          HoursOfOperation[]
   classSchedules ClassSchedule[]
   utilization    ClassUtilization[]
