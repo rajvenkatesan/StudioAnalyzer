@@ -125,6 +125,16 @@ export async function scrapeStudioWebsite(
 }
 
 // ── Solidcore ─────────────────────────────────────────────────────────────────
+//
+// Solidcore's website changed its URL structure. /pricing and /classes no
+// longer exist — both redirect to the homepage. The individual studio page
+// (e.g. /studios/marina) is the correct entry point. It shows a schedule
+// widget that lazy-loads after the page settles, so we need a longer wait
+// and a scroll pass to trigger the lazy loading.
+//
+// Pricing requires interactive studio selection on /membership-perks and
+// cannot be extracted without user interaction; we still attempt it but
+// expect it to return empty most of the time.
 
 async function scrapeSolidcore(page: Page, baseUrl: string): Promise<ScrapeResult> {
   const result: ScrapeResult = {
@@ -136,20 +146,61 @@ async function scrapeSolidcore(page: Page, baseUrl: string): Promise<ScrapeResul
     hoursDataAvailable: false,
   }
 
+  // For a specific studio page (pathDepth ≥ 1, e.g. /studios/marina),
+  // the page itself contains the schedule widget. Scrape it directly.
+  // For the brand root we fall through to the generic path approach below.
+  const urlPath = (() => { try { return new URL(baseUrl).pathname } catch { return '/' } })()
+  const pathDepth = urlPath.split('/').filter(Boolean).length
+
+  if (pathDepth >= 1) {
+    // ── Studio-specific page ────────────────────────────────────────────────
+    try {
+      await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 })
+      // Scroll the page to trigger lazy loading of the schedule widget
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2))
+      await sleep(CRAWL_DELAY + 4_000)
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+      await sleep(2_000)
+      result.schedule = await extractScheduleWithDays(page)
+      result.scheduleDataAvailable = result.schedule.length > 0
+      const hours = await extractHoursGeneric(page)
+      if (Object.values(hours).some((v) => v !== null)) {
+        result.hoursOfOperation = hours
+        result.hoursDataAvailable = true
+      }
+    } catch { /* schedule unavailable */ }
+
+    // Pricing: solidcore requires interactive studio selection on /membership-perks
+    // and cannot be scraped without user interaction. Attempt it anyway; if the
+    // page ever renders prices without interaction, the generic extractor will
+    // find them. Otherwise this returns empty with no error.
+    try {
+      await page.goto(new URL('/membership-perks', baseUrl).toString(), { waitUntil: 'domcontentloaded', timeout: 15_000 })
+      await sleep(CRAWL_DELAY + 2_000)
+      result.pricing = await extractPricingGeneric(page)
+      result.pricingDataAvailable = result.pricing.length > 0
+    } catch { /* pricing unavailable */ }
+
+    if (!result.scheduleDataAvailable && !result.pricingDataAvailable) {
+      result.warningMessage =
+        'Solidcore schedule requires login and pricing requires studio selection — no data could be extracted automatically.'
+    }
+    return result
+  }
+
+  // ── Brand root URL — fall back to schedule/pricing hint paths ──────────────
   try {
-    await page.goto(new URL('/pricing', baseUrl).toString(), { waitUntil: 'domcontentloaded', timeout: 15_000 })
+    await page.goto(new URL('/membership-perks', baseUrl).toString(), { waitUntil: 'domcontentloaded', timeout: 15_000 })
     await sleep(CRAWL_DELAY)
     result.pricing = await extractPricingGeneric(page)
     result.pricingDataAvailable = result.pricing.length > 0
   } catch { result.pricingDataAvailable = false }
 
   try {
-    await page.goto(new URL('/classes', baseUrl).toString(), { waitUntil: 'networkidle', timeout: 20_000 })
+    await page.goto(new URL('/studios', baseUrl).toString(), { waitUntil: 'domcontentloaded', timeout: 15_000 })
     await sleep(CRAWL_DELAY)
     result.schedule = await extractScheduleWithDays(page)
     result.scheduleDataAvailable = result.schedule.length > 0
-    const hours = await extractHoursGeneric(page)
-    if (Object.values(hours).some((v) => v !== null)) { result.hoursOfOperation = hours; result.hoursDataAvailable = true }
   } catch { result.scheduleDataAvailable = false }
 
   return result
