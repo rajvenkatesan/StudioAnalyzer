@@ -276,7 +276,7 @@ async function scrapeWithLocationsHint(
     // Scrape schedule — stop after the first page that yields results.
     // We only want ONE location's schedule (each studio in the DB is a specific
     // location). Aggregating from multiple pages inflates the class count.
-    if (result.schedule.length === 0 && await tryGoto(page, scheduleUrl)) {
+    if (result.schedule.length === 0 && await tryGotoContent(page, scheduleUrl)) {
       const sched = await extractScheduleWithDays(page)
       for (const row of sched) {
         const key = `${row.dayOfWeek}_${row.startTime}`
@@ -301,7 +301,7 @@ async function scrapeWithLocationsHint(
 
     // Scrape pricing (separate page)
     if (pricingUrl !== scheduleUrl && result.pricing.length === 0) {
-      if (await tryGoto(page, pricingUrl)) {
+      if (await tryGotoContent(page, pricingUrl)) {
         const pricing = await extractPricingGeneric(page)
         for (const row of pricing) {
           const key = `${row.planType}_${row.priceAmount}`
@@ -330,6 +330,7 @@ function resolveUrl(pathOrUrl: string, baseUrl: string): string {
   try { return new URL(pathOrUrl, baseUrl).toString() } catch { return baseUrl }
 }
 
+// Used for navigation/listing pages where we only need links — fast, no JS wait.
 async function tryGoto(page: Page, url: string): Promise<boolean> {
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 10_000 })
@@ -337,6 +338,26 @@ async function tryGoto(page: Page, url: string): Promise<boolean> {
     return true
   } catch {
     return false
+  }
+}
+
+// Used for schedule/pricing content pages — waits for network activity to settle
+// so that JS-rendered booking widgets (Mindbody, etc.) have time to populate.
+async function tryGotoContent(page: Page, url: string): Promise<boolean> {
+  try {
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 20_000 })
+    await sleep(CRAWL_DELAY)
+    return true
+  } catch {
+    // networkidle can time out on pages with continuous polling; fall back to
+    // domcontentloaded + extra delay so we still attempt extraction.
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 10_000 })
+      await sleep(CRAWL_DELAY + 3_000)
+      return true
+    } catch {
+      return false
+    }
   }
 }
 
@@ -351,10 +372,14 @@ async function scrapeGeneric(page: Page, baseUrl: string, hint?: StudioHint): Pr
   }
 
   // ── 1. Homepage ──────────────────────────────────────────────────────────
-  const homeOk = await tryGoto(page, baseUrl)
+  const homeOk = await tryGotoContent(page, baseUrl)
   if (homeOk) {
     result.pricing  = await extractPricingGeneric(page)
-    result.schedule = await extractScheduleWithDays(page)
+    // Skip homepage schedule when a dedicated hint page is configured — homepages
+    // often only show a partial upcoming-classes widget, not the full weekly schedule.
+    if (!hint?.schedulePage) {
+      result.schedule = await extractScheduleWithDays(page)
+    }
     const hours = await extractHoursGeneric(page)
     if (Object.values(hours).some((v) => v !== null)) {
       result.hoursOfOperation = hours
@@ -370,7 +395,7 @@ async function scrapeGeneric(page: Page, baseUrl: string, hint?: StudioHint): Pr
       : PRICING_PATHS.map((p) => { try { return new URL(p, baseUrl).toString() } catch { return '' } }).filter(Boolean)
 
     for (const url of pricingCandidates) {
-      if (!await tryGoto(page, url)) continue
+      if (!await tryGotoContent(page, url)) continue
       const pricing = await extractPricingGeneric(page)
       if (pricing.length > 0) {
         result.pricing = pricing
@@ -384,15 +409,15 @@ async function scrapeGeneric(page: Page, baseUrl: string, hint?: StudioHint): Pr
     }
   }
 
-  // ── 3. Try schedule sub-pages if nothing found yet ────────────────────────
-  if (result.schedule.length === 0) {
-    // Use hint path first, then fall back to common paths
+  // ── 3. Schedule page — always visit when a hint is set; fall back to common
+  //       paths only when nothing was found yet from the homepage.
+  if (result.schedule.length === 0 || hint?.schedulePage) {
     const scheduleCandidates: string[] = hint?.schedulePage
       ? [resolveUrl(hint.schedulePage, baseUrl)]
       : SCHEDULE_PATHS.map((p) => { try { return new URL(p, baseUrl).toString() } catch { return '' } }).filter(Boolean)
 
     for (const url of scheduleCandidates) {
-      if (!await tryGoto(page, url)) continue
+      if (!await tryGotoContent(page, url)) continue
       const schedule = await extractScheduleWithDays(page)
       if (schedule.length > 0) {
         result.schedule = schedule
@@ -580,27 +605,30 @@ const SCHEDULE_EVAL = `(function() {
     }
   }
 
-  // ── Pass 2: Text-based fallback ───────────────────────────────────────────
+  // ── Pass 2: Text-based sweep ──────────────────────────────────────────────
+  // Always runs (not just when Pass 1 found nothing) so it can pick up days
+  // whose schedule-day container exceeds the 300-char limit and was skipped
+  // by Pass 1.  Deduplication via the "seen" dict prevents double-counting entries
+  // that Pass 1 already captured.
+  //
   // Filter hours-like lines, then JOIN the remaining lines into one token stream
   // before calling parseTextTokens. This is critical for schedules like Jetset
   // where the day label ("Sun04/19") is on its own line and the class times
   // ("8:00am - 8:50am") are on the next line — if we parse line-by-line,
   // curDay resets to null on every call and times are always skipped.
-  if (results.length === 0) {
-    var pageLines = (document.body.innerText || '').split('\\n');
-    var filteredText = pageLines
-      .map(function(l){ return l.trim(); })
-      .filter(function(l){ return l.length > 0 && !HOURS_LINE.test(l); })
-      .join(' ');
-    var pass2Results = parseTextTokens(filteredText);
-    for (var lri = 0; lri < pass2Results.length; lri++) {
-      var lr = pass2Results[lri];
-      var key2 = lr.day + '_' + lr.startTime;
-      if (seen[key2]) continue;
-      seen[key2] = true;
-      results.push({ day:lr.day, startTime:lr.startTime, className:'Class',
-        spotsAvailable:undefined, dataAvailable:false, durationMinutes:60 });
-    }
+  var pageLines = (document.body.innerText || '').split('\\n');
+  var filteredText = pageLines
+    .map(function(l){ return l.trim(); })
+    .filter(function(l){ return l.length > 0 && !HOURS_LINE.test(l); })
+    .join(' ');
+  var pass2Results = parseTextTokens(filteredText);
+  for (var lri = 0; lri < pass2Results.length; lri++) {
+    var lr = pass2Results[lri];
+    var key2 = lr.day + '_' + lr.startTime;
+    if (seen[key2]) continue;
+    seen[key2] = true;
+    results.push({ day:lr.day, startTime:lr.startTime, className:'Class',
+      spotsAvailable:undefined, dataAvailable:false, durationMinutes:60 });
   }
 
   return results;
@@ -707,7 +735,7 @@ const PRICING_EVAL = `(function() {
     // If the price is shown as $/month, treat as MONTHLY even when the card mentions
     // "annual" (e.g. "Founders Unlimited - $199/mo, annual commitment").
     // Guard: if the plan *name itself* says annual/yearly, keep ANNUAL.
-    if (/\$[\s\d,.]+\/\s*mo(?:nth)?/i.test(cardText) && !annualRe.test(name)) return 'MONTHLY';
+    if (/\\$[\\s\\d,.]+\\/\\s*mo(?:nth)?/i.test(cardText) && !annualRe.test(name)) return 'MONTHLY';
     if (annualRe.test(t))  return 'ANNUAL';
     if (monthlyRe.test(t)) return 'MONTHLY';
     if (packRe.test(t))    return 'CLASS_PACK';
