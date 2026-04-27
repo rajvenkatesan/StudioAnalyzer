@@ -251,6 +251,14 @@ export async function runDiscovery(runId: number): Promise<void> {
           })
         }
 
+        // Update location status if the scraper detected Open/Upcoming
+        if (scraped.studioStatus && scraped.studioStatus !== 'unknown') {
+          await prisma.location.update({
+            where: { id: location.id },
+            data: { status: scraped.studioStatus },
+          })
+        }
+
         // Log warning if scraping was blocked
         if (scraped.warningMessage) {
           await prisma.discoveryRun.update({
@@ -588,6 +596,14 @@ export async function runRefresh(runId: number, studioIds: number[]): Promise<vo
                 notes: p.notes,
                 scrapedAt: new Date(),
               })),
+            })
+          }
+
+          // Update location status if the scraper detected Open/Upcoming
+          if (scraped.studioStatus && scraped.studioStatus !== 'unknown') {
+            await prisma.location.update({
+              where: { id: location.id },
+              data: { status: scraped.studioStatus },
             })
           }
 

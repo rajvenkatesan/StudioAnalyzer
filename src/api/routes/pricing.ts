@@ -71,7 +71,7 @@ const pricingRoutes: FastifyPluginAsync = async (app) => {
       where: { pricingPlans: { some: {} } },
       include: {
         studioType: true,
-        locations: { select: { city: true, state: true }, take: 1 },
+        locations: { select: { city: true, state: true, status: true }, take: 1 },
         pricingPlans: { orderBy: [{ planType: 'asc' }, { priceAmount: 'asc' }] },
       },
       orderBy: { name: 'asc' },
@@ -83,6 +83,7 @@ const pricingRoutes: FastifyPluginAsync = async (app) => {
       studioType: s.studioType.name,
       city: s.locations[0]?.city ?? null,
       state: s.locations[0]?.state ?? null,
+      status: ((s.locations[0]?.status ?? 'unknown') as 'unknown' | 'open' | 'upcoming'),
       pricingPlans: s.pricingPlans.map(toPricingRow),
     }))
 

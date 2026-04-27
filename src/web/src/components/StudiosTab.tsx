@@ -1,8 +1,153 @@
 import { useState, useEffect, useRef } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { api } from '../lib/api'
-import type { StudioSummary, PricingPlanRow, ClassScheduleRow } from '@shared/types'
+import type { StudioSummary, PricingPlanRow, ClassScheduleRow, CreateStudioRequest, StudioStatus } from '@shared/types'
 import { DAYS_OF_WEEK } from '@shared/types'
+
+// ── Status badge ──────────────────────────────────────────────────────────────
+
+function StatusBadge({ status }: { status: StudioStatus }) {
+  if (status === 'open') {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-700">
+        Open
+      </span>
+    )
+  }
+  if (status === 'upcoming') {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700">
+        Upcoming
+      </span>
+    )
+  }
+  return <span className="text-gray-300 text-[10px]">—</span>
+}
+
+// ── Add Studio modal ──────────────────────────────────────────────────────────
+
+const EMPTY_FORM: CreateStudioRequest = {
+  name: '',
+  websiteUrl: '',
+  phone: '',
+  brandName: '',
+  addressLine1: '',
+  addressLine2: '',
+  city: '',
+  state: '',
+  postalCode: '',
+  country: 'US',
+}
+
+function AddStudioModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void
+  onCreated: () => void
+}) {
+  const [form, setForm] = useState<CreateStudioRequest>(EMPTY_FORM)
+  const [error, setError] = useState<string | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: (data: CreateStudioRequest) => api.studios.create(data),
+    onSuccess: () => { onCreated(); onClose() },
+    onError: (e: any) => setError(e?.message ?? 'Failed to create studio'),
+  })
+
+  const set = (field: keyof CreateStudioRequest) =>
+    (e: React.ChangeEvent<HTMLInputElement>) =>
+      setForm((prev) => ({ ...prev, [field]: e.target.value }))
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    const payload: CreateStudioRequest = {
+      ...form,
+      websiteUrl: form.websiteUrl || undefined,
+      phone: form.phone || undefined,
+      addressLine2: form.addressLine2 || undefined,
+    }
+    mutation.mutate(payload)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-semibold text-gray-800">Add Studio</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-3">
+          {/* Studio info */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Studio Name *</label>
+              <input className="input w-full" value={form.name} onChange={set('name')} required placeholder="e.g. JETSET Pilates Irvine" />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Brand Name *</label>
+              <input className="input w-full" value={form.brandName} onChange={set('brandName')} required placeholder="e.g. jetsetpilates" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Website URL</label>
+              <input className="input w-full" value={form.websiteUrl} onChange={set('websiteUrl')} placeholder="https://..." />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
+              <input className="input w-full" value={form.phone} onChange={set('phone')} placeholder="(555) 555-5555" />
+            </div>
+          </div>
+
+          {/* Location */}
+          <div className="border-t border-gray-100 pt-3">
+            <p className="text-xs font-medium text-gray-500 mb-2">Location</p>
+            <div className="space-y-2">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Address Line 1 *</label>
+                <input className="input w-full" value={form.addressLine1} onChange={set('addressLine1')} required placeholder="123 Main St" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Address Line 2</label>
+                <input className="input w-full" value={form.addressLine2} onChange={set('addressLine2')} placeholder="Suite 200" />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="col-span-1">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">City *</label>
+                  <input className="input w-full" value={form.city} onChange={set('city')} required placeholder="Irvine" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">State *</label>
+                  <input className="input w-full" value={form.state} onChange={set('state')} required placeholder="CA" maxLength={2} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">ZIP *</label>
+                  <input className="input w-full" value={form.postalCode} onChange={set('postalCode')} required placeholder="92618" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {error && <p className="text-xs text-red-600">{error}</p>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" className="btn text-xs text-gray-500" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn text-xs bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700 disabled:opacity-40"
+              disabled={mutation.isPending}
+            >
+              {mutation.isPending ? 'Adding…' : 'Add Studio'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
 
 // 5 AM – 11 PM
 const SCHEDULE_HOURS = Array.from({ length: 19 }, (_, i) => i + 5)
@@ -331,6 +476,7 @@ export default function StudiosTab() {
   const [purgeStatus, setPurgeStatus] = useState<'idle' | 'running' | 'done' | 'failed'>('idle')
   const refreshRunId = useRef<number | null>(null)
   const purgeRunId = useRef<number | null>(null)
+  const [showAddModal, setShowAddModal] = useState(false)
 
   const { data: studios = [], isLoading } = useQuery({
     queryKey: ['studios'],
@@ -476,6 +622,13 @@ export default function StudiosTab() {
 
   return (
     <div className="p-6">
+      {showAddModal && (
+        <AddStudioModal
+          onClose={() => setShowAddModal(false)}
+          onCreated={() => queryClient.invalidateQueries({ queryKey: ['studios'] })}
+        />
+      )}
+
       {/* Header row */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-base font-semibold text-gray-800">
@@ -484,6 +637,15 @@ export default function StudiosTab() {
             <span className="ml-2 text-sm font-normal text-gray-400">{studios.length} total</span>
           )}
         </h2>
+
+        <div className="flex items-center gap-2">
+          {/* New button — always visible */}
+          <button
+            className="btn text-xs text-indigo-600 border-indigo-300 hover:bg-indigo-50"
+            onClick={() => setShowAddModal(true)}
+          >
+            + New
+          </button>
 
         {/* Action buttons — only visible when ≥1 row selected */}
         {selected.size > 0 && (
@@ -590,6 +752,7 @@ export default function StudiosTab() {
             </button>
           </div>
         )}
+        </div>
       </div>
 
       {/* Studios table */}
@@ -618,6 +781,7 @@ export default function StudiosTab() {
                   <SortTh label="Brand"    sortKey="brand"   active={sortKey === 'brand'}   dir={sortDir} onSort={handleSort} />
                   <SortTh label="City"     sortKey="city"    active={sortKey === 'city'}    dir={sortDir} onSort={handleSort} />
                   <SortTh label="Address"  sortKey="address" active={sortKey === 'address'} dir={sortDir} onSort={handleSort} />
+                  <th className="whitespace-nowrap text-gray-500 font-semibold text-xs">Status</th>
                   {DAYS_OF_WEEK.map((d) => (
                     <SortTh key={d} label={d} sortKey={d} active={sortKey === d} dir={sortDir} onSort={handleSort} className="text-center" />
                   ))}
@@ -673,6 +837,9 @@ export default function StudiosTab() {
                         {loc
                           ? `${loc.addressLine1}, ${loc.state}`
                           : <span className="na">—</span>}
+                      </td>
+                      <td>
+                        <StatusBadge status={(loc?.status ?? 'unknown') as StudioStatus} />
                       </td>
                       {DAYS_OF_WEEK.map((d) => {
                         const count = studio.dailyClassCounts[d] ?? 0
