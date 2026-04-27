@@ -525,9 +525,10 @@ export async function runRefresh(runId: number, studioIds: number[]): Promise<vo
 
       for (const location of studio.locations) {
         // Clear location-level scraped data before re-scraping this location
-        await prisma.hoursOfOperation.deleteMany({ where: { locationId: location.id } })
-        await prisma.classSchedule.deleteMany({ where: { locationId: location.id } })
+        // ClassUtilization references ClassSchedule so must be deleted first
         await prisma.classUtilization.deleteMany({ where: { locationId: location.id } })
+        await prisma.classSchedule.deleteMany({ where: { locationId: location.id } })
+        await prisma.hoursOfOperation.deleteMany({ where: { locationId: location.id } })
 
         if (studio.websiteUrl) {
           const scraped = await scrapeStudioWebsite(studio.websiteUrl, studio.normalizedBrand)
@@ -587,6 +588,21 @@ export async function runRefresh(runId: number, studioIds: number[]): Promise<vo
                 notes: p.notes,
                 scrapedAt: new Date(),
               })),
+            })
+          }
+
+          if (scraped.warningMessage) {
+            const current = await prisma.discoveryRun.findUnique({
+              where: { id: runId },
+              select: { errorMessage: true },
+            })
+            await prisma.discoveryRun.update({
+              where: { id: runId },
+              data: {
+                errorMessage: [current?.errorMessage, scraped.warningMessage]
+                  .filter(Boolean)
+                  .join('; '),
+              },
             })
           }
         }
