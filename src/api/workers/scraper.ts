@@ -308,15 +308,15 @@ async function extractSolidcorePricing(page: Page): Promise<ScrapedPricingRow[]>
   // ── Part 2: MONTHLY — click each commitment tab and read visible MEMBERSHIPS ─
   // Tab labels: [data-testid="radio-label-component"][for="12|6|1"]
   const COMMITMENT_TABS = [
-    { forAttr: '12', months: 12 },
-    { forAttr: '6',  months: 6  },
-    { forAttr: '1',  months: 1  },
+    { forAttr: '12', months: 12, label: '12-Month' },
+    { forAttr: '6',  months: 6,  label: '6-Month'  },
+    { forAttr: '1',  months: 1,  label: 'Monthly'  },
   ]
 
-  for (const { forAttr, months } of COMMITMENT_TABS) {
-    const label = page.locator(`[data-testid="radio-label-component"][for="${forAttr}"]`)
-    if (await label.count() === 0) continue
-    await label.click()
+  for (const { forAttr, months, label } of COMMITMENT_TABS) {
+    const tabEl = page.locator(`[data-testid="radio-label-component"][for="${forAttr}"]`)
+    if (await tabEl.count() === 0) continue
+    await tabEl.click()
     await sleep(1_200)
 
     const tabLines = await page.evaluate(() =>
@@ -342,7 +342,7 @@ async function extractSolidcorePricing(page: Page): Promise<ScrapedPricingRow[]>
       const classCount = solidcoreClassCount(planName)
       const validityDays = solidcoreValidityDays(notes)
 
-      plans.push({ planName, planType: 'MONTHLY', priceAmount: amount, currency: 'USD', classCount, commitmentMonths: months, validityDays, notes })
+      plans.push({ planName: `${label}: ${planName}`, planType: 'MONTHLY', priceAmount: amount, currency: 'USD', classCount, commitmentMonths: months, validityDays, notes })
     }
   }
 

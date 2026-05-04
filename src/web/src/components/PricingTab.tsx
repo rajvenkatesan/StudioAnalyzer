@@ -417,7 +417,7 @@ function DetailTable({ planType, data }: { planType: PlanType; data: PricingMatr
             <ThS label="Price"    col="priceAmount" right />
             {showPpc      && <ThS label={ppcLabel}             col="pricePerClass" right />}
             {showAnnualMo && <ThS label="÷12 /mo"              col="_annualMo"     right />}
-            {showEstPpc   && <ThS label="Est. $/cls (16×/mo)"  col="pricePerClass" right />}
+            {showEstPpc   && <ThS label="$/cls"  col="pricePerClass" right />}
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -455,7 +455,9 @@ function DetailTable({ planType, data }: { planType: PlanType; data: PricingMatr
                   <td className="px-3 py-2 text-right text-sm text-gray-600 tabular-nums">
                     {row.classCount != null
                       ? row.classCount
-                      : <span className={row.planCategory === 'PACKS' ? 'text-red-400 font-semibold' : 'text-gray-300'}>—</span>}
+                      : /\bunlimited\b/i.test(row.planName)
+                        ? <span className="text-violet-500 font-semibold text-xs">∞</span>
+                        : <span className={row.planCategory === 'PACKS' ? 'text-red-400 font-semibold' : 'text-gray-300'}>—</span>}
                   </td>
                 )}
 
@@ -510,7 +512,7 @@ function DetailTable({ planType, data }: { planType: PlanType; data: PricingMatr
       <p className="text-[10px] text-gray-400 text-right pt-2 pr-3 pb-4">
         {rows.length} plan{rows.length !== 1 ? 's' : ''} across{' '}
         {new Set(rows.map((r) => r.studioId)).size} studios.
-        {showEstPpc && ' Est. $/cls assumes 16 classes/month.'}
+        {showEstPpc && ' $/cls uses actual class count; unlimited plans assume 16/mo.'}
         {rows.some((r) => r.isPartial) && ' '}
         {rows.some((r) => r.isPartial) && (
           <span className="text-red-400">Red rows = partial data (scraper could not determine all fields).</span>

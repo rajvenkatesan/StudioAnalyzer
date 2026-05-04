@@ -38,7 +38,7 @@ const tabs = [
   },
   {
     key: 'pricing' as const,
-    label: 'Pricing',
+    label: 'Studio-Prices',
     icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
         <path strokeLinecap="round" strokeLinejoin="round"

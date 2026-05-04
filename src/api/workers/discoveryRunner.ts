@@ -9,7 +9,9 @@ import type { DayOfWeek } from '../../shared/types'
 function buildPricingPlanData(studioId: number, p: ScrapedPricingRow) {
   const planCategory = derivePlanCategory(p.planType, p.planName)
   const commitmentMonths = p.commitmentMonths ?? extractCommitmentMonths(p.planType, p.planName, p.notes)
-  const isPartial = (planCategory == null) || (planCategory === 'PACKS' && (p.classCount == null))
+  // DROP_IN is always a single class
+  const classCount = p.planType === 'DROP_IN' ? (p.classCount ?? 1) : p.classCount
+  const isPartial = (planCategory == null) || (planCategory === 'PACKS' && (classCount == null))
   return {
     studioId,
     planName: p.planName,
@@ -17,10 +19,10 @@ function buildPricingPlanData(studioId: number, p: ScrapedPricingRow) {
     planCategory,
     priceAmount: p.priceAmount,
     currency: p.currency,
-    classCount: p.classCount,
+    classCount,
     commitmentMonths,
     validityDays: p.validityDays,
-    pricePerClass: computePricePerClass(p.planType, p.priceAmount, p.classCount),
+    pricePerClass: computePricePerClass(p.planType, p.priceAmount, classCount),
     isPartial,
     notes: p.notes,
     scrapedAt: new Date(),
@@ -54,8 +56,10 @@ export function computePricePerClass(
       if (!classCount || classCount <= 0) return null
       return round2(priceAmount / classCount)
     case 'MONTHLY':
+      if (classCount && classCount > 0) return round2(priceAmount / classCount)
       return round2(priceAmount / UNLIMITED_CLASSES_PER_MONTH)
     case 'ANNUAL':
+      if (classCount && classCount > 0) return round2(priceAmount / 12 / classCount)
       return round2(priceAmount / 12 / UNLIMITED_CLASSES_PER_MONTH)
     default:
       return null
