@@ -2,6 +2,7 @@
 
 export type DayOfWeek = 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' | 'SUN'
 export type PlanType = 'INTRO' | 'DROP_IN' | 'CLASS_PACK' | 'MONTHLY' | 'ANNUAL'
+export type PlanCategory = 'INTRO' | 'PACKS' | 'MONTHLY' | 'SPECIAL' | 'CUSTOM'
 export type RunStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
 
 export const DAYS_OF_WEEK: DayOfWeek[] = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
@@ -84,6 +85,7 @@ export interface StudioSummary {
   websiteUrl: string | null
   phone: string | null
   locationCount: number
+  zipcode: string | null
   locations: StudioLocationSummary[]
   weeklyClassCount: number
   dailyClassCounts: Record<DayOfWeek, number>
@@ -141,11 +143,14 @@ export interface PricingPlanRow {
   locationId: number | null
   planName: string
   planType: PlanType
+  planCategory: PlanCategory | null
   priceAmount: number
   currency: string
   classCount: number | null
+  commitmentMonths: number | null
   validityDays: number | null
   pricePerClass: number | null
+  isPartial: boolean
   notes: string | null
 }
 

@@ -34,5 +34,10 @@ pricing_page: pricing/
 schedule_page: /classes
 pricing_page: /pricing
 
+## core40
+locations_page: https://core40.com
+pricing_page: /get-classes
+schedule_page: /marina
+
 ## orangetheory
 locations_page: https://www.orangetheory.com/en-us/locations/

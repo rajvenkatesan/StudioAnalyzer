@@ -122,22 +122,25 @@ model ClassUtilization {
 
 /// Current pricing plans per studio. Replaced in full on each re-run (no history in v1).
 model PricingPlan {
-  id            Int       @id @default(autoincrement())
-  studioId      Int
-  studio        Studio    @relation(fields: [studioId], references: [id], onDelete: Cascade)
-  locationId    Int?
-  location      Location? @relation(fields: [locationId], references: [id])
-  planName      String
-  planType      String    // "DROP_IN" | "CLASS_PACK" | "MONTHLY" | "ANNUAL"
-  priceAmount   Float
-  currency      String    @default("USD")
-  classCount    Int?      // for CLASS_PACK
-  validityDays  Int?
-  pricePerClass Float?    // computed at insert; see pricing normalization rules
-  notes         String?
-  scrapedAt     DateTime  @default(now())
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id               Int       @id @default(autoincrement())
+  studioId         Int
+  studio           Studio    @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  locationId       Int?
+  location         Location? @relation(fields: [locationId], references: [id])
+  planName         String
+  planType         String    // "DROP_IN" | "CLASS_PACK" | "MONTHLY" | "ANNUAL" | "INTRO"
+  planCategory     String?   // "INTRO" | "PACKS" | "MONTHLY" | "SPECIAL" | "CUSTOM"
+  priceAmount      Float
+  currency         String    @default("USD")
+  classCount       Int?      // # of classes in the plan
+  commitmentMonths Int?      // null = no commitment; 3/6/12 = months of commitment required
+  validityDays     Int?
+  pricePerClass    Float?    // computed at insert; see pricing normalization rules
+  isPartial        Boolean   @default(false) // true when planCategory/classCount/commitment could not be fully determined
+  notes            String?
+  scrapedAt        DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 
 model Instructor {

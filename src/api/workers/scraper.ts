@@ -21,8 +21,46 @@ export interface ScrapedPricingRow {
   priceAmount: number
   currency: string
   classCount?: number
+  commitmentMonths?: number
   validityDays?: number
   notes?: string
+}
+
+/** Derive the plan category from the plan type and plan text. */
+export function derivePlanCategory(
+  planType: ScrapedPricingRow['planType'],
+  _planName: string
+): 'INTRO' | 'PACKS' | 'MONTHLY' | 'SPECIAL' | 'CUSTOM' {
+  switch (planType) {
+    case 'INTRO':      return 'INTRO'
+    case 'CLASS_PACK': return 'PACKS'
+    case 'MONTHLY':    return 'MONTHLY'
+    case 'ANNUAL':     return 'MONTHLY'
+    case 'DROP_IN':    return 'SPECIAL'
+    default:           return 'CUSTOM'
+  }
+}
+
+/** Extract commitment length in months from plan name/notes text.
+ *  Returns null for month-to-month (no commitment) or non-monthly plans. */
+export function extractCommitmentMonths(
+  planType: ScrapedPricingRow['planType'],
+  planName: string,
+  notes?: string
+): number | null {
+  if (planType === 'ANNUAL') return 12
+  if (planType !== 'MONTHLY') return null
+
+  const text = `${planName} ${notes ?? ''}`.toLowerCase()
+
+  // Patterns like "12-month", "12 month", "1 year", "annual commitment"
+  if (/12[- ]?month|\b1[- ]?year\b|annual\s+commit/i.test(text)) return 12
+  if (/6[- ]?month/i.test(text)) return 6
+  if (/3[- ]?month/i.test(text)) return 3
+  // "1 month" or "monthly commitment" = 1 month term
+  if (/\b1[- ]?month\b|monthly\s+commit/i.test(text)) return 1
+
+  return null
 }
 
 export interface ScrapeResult {
@@ -206,10 +244,14 @@ function solidcoreClassCount(planName: string): number | undefined {
   // "2 week unlimited" → 2*7 = 14
   const weekMatch = s.match(/(\d+)\s*[- ]?week[- ]?unlimited/)
   if (weekMatch) return parseInt(weekMatch[1]) * 7
-  if (/\bunlimited\b/.test(s)) return 16  // monthly unlimited → assume 16
-  // "4/mo" or "8/mo" → 4 or 8
+  // "4/mo." or "8/mo" → specific classes/month; check BEFORE unlimited so
+  // "Unlimited 4/mo" resolves to 4, not the fallback
   const moMatch = s.match(/(\d+)\s*\/\s*mo/)
   if (moMatch) return parseInt(moMatch[1])
+  if (/\bunlimited\b/.test(s)) return undefined  // truly unlimited — no class count
+  // "Monthly 4 Membership" / "Monthly 8 Membership" (no /mo suffix)
+  const monthlyNMatch = s.match(/monthly\s+(\d+)\s/)
+  if (monthlyNMatch) return parseInt(monthlyNMatch[1])
   // "10-class pack", "5-class pack", "4 pack"
   const packMatch = s.match(/(\d+)[- ]*class[- ]*pack/) ?? s.match(/(\d+)[- ]*pack/)
   if (packMatch) return parseInt(packMatch[1])
@@ -231,35 +273,79 @@ async function extractSolidcorePricing(page: Page): Promise<ScrapedPricingRow[]>
     )
   } catch { return [] }
 
-  const lines = await page.evaluate(() =>
+  const plans: ScrapedPricingRow[] = []
+
+  // ── Part 1: INTRO + CLASS_PACK — read from non-MEMBERSHIPS sections ─────────
+  const allLines = await page.evaluate(() =>
     (document.body.innerText ?? '').split('\n').map((l: string) => l.trim()).filter((l: string) => l),
   )
 
-  const plans: ScrapedPricingRow[] = []
-  let planType: ScrapedPricingRow['planType'] = 'DROP_IN'
+  let currentSection: ScrapedPricingRow['planType'] = 'DROP_IN'
+  let inMemberships = false
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    if (/^NEW CLIENT/i.test(line)) { planType = 'INTRO'; continue }
-    if (/^MEMBERSHIPS$/i.test(line)) { planType = 'MONTHLY'; continue }
-    if (/^12-Month$/i.test(line)) { planType = 'ANNUAL'; continue }
-    if (/^(6-Month|Monthly)$/i.test(line)) { planType = 'MONTHLY'; continue }
-    if (/^PACKAGES$/i.test(line)) { planType = 'CLASS_PACK'; continue }
+  for (let i = 0; i < allLines.length; i++) {
+    const line = allLines[i]
+    if (/^NEW CLIENT/i.test(line)) { currentSection = 'INTRO'; inMemberships = false; continue }
+    if (/^MEMBERSHIPS$/i.test(line)) { inMemberships = true; continue }
+    if (/^PACKAGES$/i.test(line)) { currentSection = 'CLASS_PACK'; inMemberships = false; continue }
+    // MEMBERSHIPS content is handled by tab-clicking in Part 2
+    if (inMemberships) continue
 
     const pm = line.match(/^\$([0-9,]+)(?:\/mo)?/)
     if (!pm) continue
-    const planName = lines[i - 1] ?? ''
+    const planName = allLines[i - 1] ?? ''
     if (!planName || /^(Buy|Expires|Auto|Max|Valid|Subject|\*|SELECT)/i.test(planName)) continue
 
     const amount = parseFloat(pm[1].replace(/,/g, ''))
-    // Notes are 2 lines below (line i+1 is "Buy", line i+2 is the description)
-    const notes = lines[i + 2] && !/^(Buy|\*)/.test(lines[i + 2]) ? lines[i + 2].substring(0, 200) : undefined
-
+    const notes = allLines[i + 2] && !/^(Buy|\*)/.test(allLines[i + 2]) ? allLines[i + 2].substring(0, 200) : undefined
     const classCount = solidcoreClassCount(planName)
     const validityDays = solidcoreValidityDays(notes)
+    const commitmentMonths = extractCommitmentMonths(currentSection, planName, notes ?? undefined) ?? undefined
 
-    plans.push({ planName, planType, priceAmount: amount, currency: 'USD', classCount, validityDays, notes })
+    plans.push({ planName, planType: currentSection, priceAmount: amount, currency: 'USD', classCount, commitmentMonths, validityDays, notes })
   }
+
+  // ── Part 2: MONTHLY — click each commitment tab and read visible MEMBERSHIPS ─
+  // Tab labels: [data-testid="radio-label-component"][for="12|6|1"]
+  const COMMITMENT_TABS = [
+    { forAttr: '12', months: 12 },
+    { forAttr: '6',  months: 6  },
+    { forAttr: '1',  months: 1  },
+  ]
+
+  for (const { forAttr, months } of COMMITMENT_TABS) {
+    const label = page.locator(`[data-testid="radio-label-component"][for="${forAttr}"]`)
+    if (await label.count() === 0) continue
+    await label.click()
+    await sleep(1_200)
+
+    const tabLines = await page.evaluate(() =>
+      (document.body.innerText ?? '').split('\n').map((l: string) => l.trim()).filter((l: string) => l),
+    )
+
+    let inSection = false
+    for (let i = 0; i < tabLines.length; i++) {
+      const line = tabLines[i]
+      if (/^MEMBERSHIPS$/i.test(line)) { inSection = true; continue }
+      if (/^PACKAGES$/i.test(line) && inSection) break
+      if (!inSection) continue
+      // Skip commitment-period tab labels themselves
+      if (/^(12-Month|6-Month|Monthly)$/i.test(line)) continue
+
+      const pm = line.match(/^\$([0-9,]+)(?:\/mo)?/)
+      if (!pm) continue
+      const planName = tabLines[i - 1] ?? ''
+      if (!planName || /^(Buy|Expires|Auto|Max|Valid|Subject|\*|SELECT|12-Month|6-Month|Monthly|MEMBERSHIPS)/i.test(planName)) continue
+
+      const amount = parseFloat(pm[1].replace(/,/g, ''))
+      const notes = tabLines[i + 2] && !/^(Buy|\*)/.test(tabLines[i + 2]) ? tabLines[i + 2].substring(0, 200) : undefined
+      const classCount = solidcoreClassCount(planName)
+      const validityDays = solidcoreValidityDays(notes)
+
+      plans.push({ planName, planType: 'MONTHLY', priceAmount: amount, currency: 'USD', classCount, commitmentMonths: months, validityDays, notes })
+    }
+  }
+
   return plans
 }
 

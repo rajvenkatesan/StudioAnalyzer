@@ -97,6 +97,7 @@ export default function Studios() {
               <tr>
                 <th>Studio</th>
                 <th>Address</th>
+                <th>Zipcode</th>
                 <th>Type</th>
                 <th>Schedule</th>
                 <th>Last Seen</th>
@@ -141,6 +142,9 @@ export default function Studios() {
                         )}
                       </div>
                     )}
+                  </td>
+                  <td className="text-sm text-gray-600 font-mono tabular-nums">
+                    {s.zipcode ?? <span className="na-cell">—</span>}
                   </td>
                   <td>
                     <span className="inline-block text-xs font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 capitalize">

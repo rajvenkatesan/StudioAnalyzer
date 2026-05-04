@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, CSSProperties } from 'react'
 import { api } from '../lib/api'
-import type { PricingMatrixEntry, PricingPlanRow, PlanType, StudioStatus } from '@shared/types'
+import type { PricingMatrixEntry, PricingPlanRow, PlanType, PlanCategory, StudioStatus } from '@shared/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -107,6 +107,29 @@ function buildRows(data: PricingMatrixEntry[]): StudioRow[] {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+const CATEGORY_LABELS: Record<PlanCategory, string> = {
+  INTRO:   'Intro',
+  PACKS:   'Packs',
+  MONTHLY: 'Monthly',
+  SPECIAL: 'Special',
+  CUSTOM:  'Custom',
+}
+
+const CATEGORY_COLORS: Record<PlanCategory, string> = {
+  INTRO:   'bg-purple-100 text-purple-700',
+  PACKS:   'bg-indigo-100 text-indigo-700',
+  MONTHLY: 'bg-teal-100 text-teal-700',
+  SPECIAL: 'bg-amber-100 text-amber-700',
+  CUSTOM:  'bg-gray-100 text-gray-500',
+}
+
+function fmtCommitment(months: number | null | undefined): string {
+  if (months == null) return 'None'
+  if (months === 1)  return '1 mo'
+  if (months === 12) return '1 yr'
+  return `${months} mo`
+}
 
 function fmt(v: number | null | undefined, dec = 0): string {
   if (v == null) return '—'
@@ -364,11 +387,12 @@ function DetailTable({ planType, data }: { planType: PlanType; data: PricingMatr
     )
   }
 
-  const showClasses  = planType === 'INTRO' || planType === 'CLASS_PACK' || planType === 'MONTHLY'
-  const showPpc      = planType === 'DROP_IN' || planType === 'CLASS_PACK'
-  const showAnnualMo = planType === 'ANNUAL'
-  const showEstPpc   = planType === 'MONTHLY' || planType === 'ANNUAL'
-  const ppcLabel     = planType === 'DROP_IN' ? '$/class' : '$/cls'
+  const showClasses    = planType === 'INTRO' || planType === 'CLASS_PACK' || planType === 'MONTHLY'
+  const showCommitment = planType === 'MONTHLY' || planType === 'ANNUAL'
+  const showPpc        = planType === 'DROP_IN' || planType === 'CLASS_PACK'
+  const showAnnualMo   = planType === 'ANNUAL'
+  const showEstPpc     = planType === 'MONTHLY' || planType === 'ANNUAL'
+  const ppcLabel       = planType === 'DROP_IN' ? '$/class' : '$/cls'
 
   const ThS = ({ label, col, right = false }: { label: string; col: string; right?: boolean }) => (
     <th onClick={() => onSort(col)}
@@ -384,36 +408,60 @@ function DetailTable({ planType, data }: { planType: PlanType; data: PricingMatr
       <table className="w-full border-collapse text-sm">
         <thead className="sticky top-0 z-20 bg-gray-50 border-b border-gray-200">
           <tr>
-            <ThS label="Studio"  col="studioName"
-                 right={false} />
-            <ThS label="City"    col="city" />
-            <ThS label="Package" col="planName" />
-            {showClasses  && <ThS label="Classes"  col="classCount"    right />}
-            <ThS label="Price"   col="priceAmount" right />
-            {showPpc      && <ThS label={ppcLabel}  col="pricePerClass" right />}
-            {showAnnualMo && <ThS label="÷12 /mo"   col="_annualMo"     right />}
-            {showEstPpc   && <ThS label="Est. $/cls (16×/mo)" col="pricePerClass" right />}
+            <ThS label="Studio"   col="studioName" />
+            <ThS label="City"     col="city" />
+            <ThS label="Package"  col="planName" />
+            <ThS label="Category" col="planCategory" />
+            {showClasses    && <ThS label="Classes"    col="classCount"      right />}
+            {showCommitment && <ThS label="Commitment" col="commitmentMonths" right />}
+            <ThS label="Price"    col="priceAmount" right />
+            {showPpc      && <ThS label={ppcLabel}             col="pricePerClass" right />}
+            {showAnnualMo && <ThS label="÷12 /mo"              col="_annualMo"     right />}
+            {showEstPpc   && <ThS label="Est. $/cls (16×/mo)"  col="pricePerClass" right />}
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
           {sorted.map((row, i) => {
-            const annualMo = row.priceAmount / 12
+            const annualMo   = row.priceAmount / 12
+            const rowBg      = row.isPartial
+              ? (i % 2 === 0 ? 'bg-red-50' : 'bg-red-50/70')
+              : (i % 2 === 0 ? 'bg-white'  : 'bg-gray-50/50')
             return (
-              <tr key={`${row.id}-${i}`} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
+              <tr key={`${row.id}-${i}`} className={rowBg}>
                 <StudioCell name={row.studioName} type={row.studioType} status={row.status} />
                 <CityCell city={row.city} state={row.state} />
 
                 {/* Package name */}
                 <td className="px-3 py-2 text-gray-700" style={{ maxWidth: 220 }}>
                   <div className="truncate text-sm" title={row.planName}>{row.planName}</div>
+                  {row.isPartial && (
+                    <div className="text-[10px] text-red-600 font-semibold">⚠ partial data</div>
+                  )}
                   {row.notes && (
                     <div className="text-[10px] text-amber-600 truncate" title={row.notes}>⚠ {row.notes}</div>
                   )}
                 </td>
 
+                {/* Category badge */}
+                <td className="px-3 py-2 whitespace-nowrap">
+                  {row.planCategory
+                    ? <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-semibold uppercase ${CATEGORY_COLORS[row.planCategory]}`}>
+                        {CATEGORY_LABELS[row.planCategory]}
+                      </span>
+                    : <span className="text-gray-300 text-xs">—</span>}
+                </td>
+
                 {showClasses && (
                   <td className="px-3 py-2 text-right text-sm text-gray-600 tabular-nums">
-                    {row.classCount != null ? row.classCount : <span className="text-gray-300">—</span>}
+                    {row.classCount != null
+                      ? row.classCount
+                      : <span className={row.planCategory === 'PACKS' ? 'text-red-400 font-semibold' : 'text-gray-300'}>—</span>}
+                  </td>
+                )}
+
+                {showCommitment && (
+                  <td className="px-3 py-2 text-right text-sm text-gray-600 whitespace-nowrap">
+                    {fmtCommitment(row.commitmentMonths)}
                   </td>
                 )}
 
@@ -463,6 +511,10 @@ function DetailTable({ planType, data }: { planType: PlanType; data: PricingMatr
         {rows.length} plan{rows.length !== 1 ? 's' : ''} across{' '}
         {new Set(rows.map((r) => r.studioId)).size} studios.
         {showEstPpc && ' Est. $/cls assumes 16 classes/month.'}
+        {rows.some((r) => r.isPartial) && ' '}
+        {rows.some((r) => r.isPartial) && (
+          <span className="text-red-400">Red rows = partial data (scraper could not determine all fields).</span>
+        )}
       </p>
     </div>
   )

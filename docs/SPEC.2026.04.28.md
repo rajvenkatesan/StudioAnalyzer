@@ -1,0 +1,5 @@
+ Feature Request: On pricing, there are three components that are critical for pricing. 1. Plan Category - which can be Intro, Packs, Monthly, Special or Custom. 2. # of classes that come for the total $ amount. Usually it will be number of sessions/classes for the given duration. 3. Commitment - how long of a commitment do I need. For Intro and Class Packs, there is no commitment. Sometimes Monthly pack will have 3 month, 6 month or 1 year commitment. Will be good to organize the pricing table in this way so that each of these aspects can be captured as part of pricing and when scraping, update these fields.
+
+Pricing table should have all the above 3 fields - plan category, # classes, commitment period in addition to the total price and per class price. While scraping data from website, the code should be able to look for all these parameters and update them. If it cannot decipher all these fields, it should be marked as partial and highlighted in red in UI. 
+
+Add a new column to studio table called zipcode and make it visible in UI. 

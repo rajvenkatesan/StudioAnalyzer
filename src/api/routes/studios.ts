@@ -91,6 +91,7 @@ const studioRoutes: FastifyPluginAsync = async (app) => {
             websiteUrl: s.websiteUrl,
             phone: s.phone,
             locationCount: s.locations.length,
+            zipcode: s.locations[0]?.postalCode ?? null,
             locations: s.locations.map((l) => ({
               id: l.id,
               addressLine1: l.addressLine1,

@@ -1,9 +1,31 @@
 import prisma from '../lib/prisma'
 import { geocodeZipcode, deriveBoundaryRadius } from './geocode'
 import { searchStudiosNearbyWithFixture, searchStudiosByName } from './places'
-import { scrapeStudioWebsite, normalizeBrandName } from './scraper'
+import { scrapeStudioWebsite, normalizeBrandName, derivePlanCategory, extractCommitmentMonths } from './scraper'
+import type { ScrapedPricingRow } from './scraper'
 import { DAYS_OF_WEEK, OPERATING_HOURS } from '../../shared/types'
 import type { DayOfWeek } from '../../shared/types'
+
+function buildPricingPlanData(studioId: number, p: ScrapedPricingRow) {
+  const planCategory = derivePlanCategory(p.planType, p.planName)
+  const commitmentMonths = p.commitmentMonths ?? extractCommitmentMonths(p.planType, p.planName, p.notes)
+  const isPartial = (planCategory == null) || (planCategory === 'PACKS' && (p.classCount == null))
+  return {
+    studioId,
+    planName: p.planName,
+    planType: p.planType,
+    planCategory,
+    priceAmount: p.priceAmount,
+    currency: p.currency,
+    classCount: p.classCount,
+    commitmentMonths,
+    validityDays: p.validityDays,
+    pricePerClass: computePricePerClass(p.planType, p.priceAmount, p.classCount),
+    isPartial,
+    notes: p.notes,
+    scrapedAt: new Date(),
+  }
+}
 
 // In-memory cancellation tokens — keyed by runId.
 // Checked at the start of each place-processing iteration.
@@ -236,18 +258,7 @@ export async function runDiscovery(runId: number): Promise<void> {
         // 5d. Re-insert PricingPlans
         if (scraped.pricingDataAvailable && scraped.pricing.length > 0) {
           await prisma.pricingPlan.createMany({
-            data: scraped.pricing.map((p) => ({
-              studioId: studio.id,
-              planName: p.planName,
-              planType: p.planType,
-              priceAmount: p.priceAmount,
-              currency: p.currency,
-              classCount: p.classCount,
-              validityDays: p.validityDays,
-              pricePerClass: computePricePerClass(p.planType, p.priceAmount, p.classCount),
-              notes: p.notes,
-              scrapedAt: new Date(),
-            })),
+            data: scraped.pricing.map((p) => buildPricingPlanData(studio.id, p)),
           })
         }
 
@@ -455,18 +466,7 @@ export async function runFranchiseDiscovery(runId: number): Promise<void> {
 
         if (scraped.pricingDataAvailable && scraped.pricing.length > 0) {
           await prisma.pricingPlan.createMany({
-            data: scraped.pricing.map((p) => ({
-              studioId: studio.id,
-              planName: p.planName,
-              planType: p.planType,
-              priceAmount: p.priceAmount,
-              currency: p.currency,
-              classCount: p.classCount,
-              validityDays: p.validityDays,
-              pricePerClass: computePricePerClass(p.planType, p.priceAmount, p.classCount),
-              notes: p.notes,
-              scrapedAt: new Date(),
-            })),
+            data: scraped.pricing.map((p) => buildPricingPlanData(studio.id, p)),
           })
         }
       }
@@ -584,18 +584,7 @@ export async function runRefresh(runId: number, studioIds: number[]): Promise<vo
 
           if (scraped.pricingDataAvailable && scraped.pricing.length > 0) {
             await prisma.pricingPlan.createMany({
-              data: scraped.pricing.map((p) => ({
-                studioId: studio.id,
-                planName: p.planName,
-                planType: p.planType,
-                priceAmount: p.priceAmount,
-                currency: p.currency,
-                classCount: p.classCount,
-                validityDays: p.validityDays,
-                pricePerClass: computePricePerClass(p.planType, p.priceAmount, p.classCount),
-                notes: p.notes,
-                scrapedAt: new Date(),
-              })),
+              data: scraped.pricing.map((p) => buildPricingPlanData(studio.id, p)),
             })
           }
 

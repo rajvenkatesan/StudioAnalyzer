@@ -781,6 +781,7 @@ export default function StudiosTab() {
                   <SortTh label="Brand"    sortKey="brand"   active={sortKey === 'brand'}   dir={sortDir} onSort={handleSort} />
                   <SortTh label="City"     sortKey="city"    active={sortKey === 'city'}    dir={sortDir} onSort={handleSort} />
                   <SortTh label="Address"  sortKey="address" active={sortKey === 'address'} dir={sortDir} onSort={handleSort} />
+                  <th className="whitespace-nowrap text-gray-500 font-semibold text-xs">Zipcode</th>
                   <th className="whitespace-nowrap text-gray-500 font-semibold text-xs">Status</th>
                   {DAYS_OF_WEEK.map((d) => (
                     <SortTh key={d} label={d} sortKey={d} active={sortKey === d} dir={sortDir} onSort={handleSort} className="text-center" />
@@ -837,6 +838,9 @@ export default function StudiosTab() {
                         {loc
                           ? `${loc.addressLine1}, ${loc.state}`
                           : <span className="na">—</span>}
+                      </td>
+                      <td className="text-xs font-mono text-gray-600 tabular-nums">
+                        {studio.zipcode ?? <span className="na">—</span>}
                       </td>
                       <td>
                         <StatusBadge status={(loc?.status ?? 'unknown') as StudioStatus} />

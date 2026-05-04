@@ -12,11 +12,14 @@ function toPricingRow(p: any): PricingPlanRow {
     locationId: p.locationId,
     planName: p.planName,
     planType: p.planType,
+    planCategory: p.planCategory ?? null,
     priceAmount: p.priceAmount,
     currency: p.currency,
     classCount: p.classCount,
+    commitmentMonths: p.commitmentMonths ?? null,
     validityDays: p.validityDays,
     pricePerClass: p.pricePerClass,
+    isPartial: p.isPartial ?? false,
     notes: p.notes,
   }
 }
